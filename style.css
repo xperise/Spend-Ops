@@ -1250,3 +1250,128 @@ table{width:100%;border-collapse:collapse}#perfShell thead th{background:var(--s
 }
 @media print{#perfShell .topbar, #perfShell .tabs, #perfShell .drivers-card{display:none!important}#perfShell{background:#fff}#perfShell .view{display:flex!important;page-break-before:always}#perfShell .view:first-of-type{page-break-before:avoid}#perfShell .card, #perfShell .kpi, #perfShell .banner{box-shadow:none;break-inside:avoid}#perfShell .page{max-width:none;padding:0}
 }
+
+/* ==========================================================================
+   Ô CHỌN NHIỀU
+   ========================================================================== */
+.multi { position: relative; }
+.ms-btn {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface); padding: .5rem .7rem;
+  font-size: 13.5px; color: var(--ink); text-align: left; cursor: pointer;
+}
+.ms-btn:hover { border-color: #CBD5D0; }
+.multi.is-on .ms-btn { border-color: var(--violet); background: var(--violet-soft); }
+.ms-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); }
+.ms-label.is-on { color: var(--ink); font-weight: 600; }
+.ms-btn i { font-size: 10px; color: var(--ink-3); flex: 0 0 auto; }
+
+.ms-pop {
+  position: absolute; top: calc(100% + 5px); left: 0; right: 0; z-index: 1050;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);
+  box-shadow: 0 18px 40px -18px rgba(18,40,26,.34); padding: 6px; min-width: 190px;
+}
+.ms-search {
+  width: 100%; border: 1px solid var(--line); border-radius: 6px;
+  padding: 4px 8px; font-size: 12.5px; margin-bottom: 5px;
+}
+.ms-search:focus { outline: none; border-color: var(--violet); }
+.ms-list { max-height: 230px; overflow-y: auto; }
+.ms-opt {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 6px; font-size: 13px; cursor: pointer;
+}
+.ms-opt:hover { background: var(--surface-2); }
+.ms-opt input { accent-color: var(--violet); cursor: pointer; flex: 0 0 auto; }
+.ms-opt span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-foot {
+  display: flex; gap: 12px; padding: 6px 8px 2px;
+  border-top: 1px solid var(--line-soft); margin-top: 4px;
+}
+
+/* ==========================================================================
+   HẠNG MỤC CON — sửa trực tiếp trong bảng
+   ========================================================================== */
+.subrow-head, .subrow-item {
+  display: grid;
+  grid-template-columns: 26px minmax(0,1fr) 96px 116px 130px 128px 30px;
+  align-items: center; gap: 8px;
+}
+.subrow-head {
+  padding: 4px 10px 6px; font-size: 9.5px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+.subrow-item { padding: 5px 10px; border-radius: 6px; }
+.subrow-item:hover { background: var(--surface); }
+.subrow-item.is-done .sub-title { text-decoration: line-through; color: var(--ink-3); }
+
+.sub-tick { border: 0; background: none; padding: 0; cursor: pointer; color: var(--ink-3); font-size: 14px; }
+.subrow-item.is-done .sub-tick { color: var(--stable); }
+
+.sub-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+
+.sub-inp {
+  width: 100%; border: 1px solid transparent; border-radius: 6px;
+  padding: 3px 6px; font-size: 12.5px; font-family: inherit;
+  color: var(--ink); background: transparent;
+}
+.sub-inp:hover { background: var(--surface-2); border-color: var(--line-soft); }
+.sub-inp:focus { outline: none; background: var(--surface); border-color: var(--violet); box-shadow: 0 0 0 3px rgba(168,85,247,.15); }
+.sub-note { font-size: 11.5px; color: var(--ink-3); }
+.sub-date { font-family: "JetBrains Mono", monospace; font-size: 11.5px; }
+.sub-date.is-late { color: var(--critical); font-weight: 600; }
+
+.sub-pick {
+  border: 1px solid transparent; border-radius: 999px;
+  padding: 2px 8px; font-size: 11px; font-weight: 600;
+  cursor: pointer; appearance: none; -webkit-appearance: none; width: 100%;
+}
+.sub-pick:hover { border-color: currentColor; }
+.sub-pick:focus { outline: none; box-shadow: 0 0 0 3px rgba(168,85,247,.2); }
+.sub-pick option { background: var(--surface); color: var(--ink); font-weight: 500; }
+
+.sub-del { opacity: 0; transition: opacity .15s; }
+.subrow-item:hover .sub-del { opacity: 1; }
+
+.subrow-new {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 10px 3px; margin-top: 4px; border-top: 1px solid var(--line-soft);
+  color: var(--ink-3); font-size: 12px;
+}
+.subrow-new i { font-size: 12px; flex: 0 0 auto; }
+.sub-new-inp { flex: 1 1 auto; }
+.sub-new-hint { flex: 0 0 auto; font-size: 10.5px; opacity: .75; }
+
+.sub-upgrade {
+  font-size: 11.5px; color: #9B1C33; background: var(--critical-soft);
+  border: 1px solid #F6C7D1; border-radius: 6px; padding: 7px 10px; margin: 6px 0;
+}
+
+/* ==========================================================================
+   THANH BẬC SẮP XẾP
+   ========================================================================== */
+.sortbar { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 8px; }
+.sb-lbl { font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+.sb-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 999px; padding: 2px 4px 2px 9px; font-size: 11.5px; color: var(--ink-2);
+}
+.sb-chip b {
+  font-family: "JetBrains Mono", monospace; font-size: 10px;
+  background: var(--violet); color: #fff; border-radius: 50%;
+  width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center;
+}
+.sb-chip i { font-size: 10px; color: var(--violet-deep); }
+.sb-x { border: 0; background: none; padding: 0 3px; color: var(--ink-3); cursor: pointer; font-size: 10px; }
+.sb-x:hover { color: var(--critical); }
+.sb-hint { font-size: 10.5px; color: var(--ink-3); opacity: .8; }
+
+@media (max-width: 900px) {
+  .subrow-head { display: none; }
+  .subrow-item { grid-template-columns: 26px minmax(0,1fr) 30px; row-gap: 4px; }
+  .subrow-item .sub-prio, .subrow-item .sub-stat,
+  .subrow-item .sub-own, .subrow-item .sub-date { grid-column: 2 / 3; }
+}

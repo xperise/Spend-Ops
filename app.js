@@ -178,7 +178,9 @@ const S = {
   mode: "workstream",   // "workstream" | "performance"
   modalId: null,
   modal: null,          // GIỮ MỘT bản popup duy nhất — tạo mới mỗi lần sẽ khóa cuộn trang
-  filters: { q: "", pic: "ALL", status: "ALL", priority: "ALL", stream: "ALL", band: "ALL", from: "", to: "", flags: [] }
+  // Các ô lọc dạng danh sách giờ là MẢNG — rỗng nghĩa là không lọc (tất cả).
+  filters: { q: "", pic: [], status: [], priority: [], stream: [], band: [], from: "", to: "", flags: [] },
+  sort: []          // các bậc sắp xếp, kiểu Excel: [{col, dir}, ...]
 };
 
 const FLAGS = {
@@ -703,11 +705,12 @@ function applyFilters() {
       const hay = [p.title, p.pic, p.next_steps, p.description, p._stream.name].join(" ").toLowerCase();
       if (!hay.includes(q)) return false;
     }
-    if (f.pic !== "ALL" && !picsOf(p).includes(f.pic)) return false;
-    if (f.status !== "ALL" && p.status !== f.status) return false;
-    if (f.priority !== "ALL" && p.priority !== f.priority) return false;
-    if (f.stream !== "ALL" && p._stream.id !== f.stream) return false;
-    if (f.band !== "ALL" && p._wri.band.key !== f.band) return false;
+    // Mảng rỗng = không lọc. Có phần tử = giữ dòng khớp BẤT KỲ giá trị nào (hoặc).
+    if (f.pic.length      && !picsOf(p).some(n => f.pic.includes(n))) return false;
+    if (f.status.length   && !f.status.includes(p.status)) return false;
+    if (f.priority.length && !f.priority.includes(p.priority)) return false;
+    if (f.stream.length   && !f.stream.includes(p._stream.id)) return false;
+    if (f.band.length     && !f.band.includes(p._wri.band.key)) return false;
 
     if (from || to) {
       const s = toDate(p.timeline_start), e = toDate(p.timeline_end);
@@ -723,30 +726,34 @@ function applyFilters() {
   renderAll();
 }
 
-function setFilter(key, value) { S.filters[key] = value; syncFilterInputs(); applyFilters(); }
-function toggleFlag(key) {
-  const i = S.filters.flags.indexOf(key);
-  if (i >= 0) S.filters.flags.splice(i, 1); else S.filters.flags.push(key);
+function setFilter(key, value) {
+  // Biểu đồ và chip vẫn gọi bằng một giá trị; ô lọc dạng danh sách cần mảng.
+  const listKeys = ["pic","status","priority","stream","band"];
+  if (listKeys.includes(key)) {
+    if (value === "ALL" || value === "" || value == null) S.filters[key] = [];
+    else if (Array.isArray(value)) S.filters[key] = value.slice();
+    else S.filters[key] = [value];
+  } else {
+    S.filters[key] = value;
+  }
+  syncFilterInputs();
   applyFilters();
 }
 function clearFilters() {
-  S.filters = { q: "", pic: "ALL", status: "ALL", priority: "ALL", stream: "ALL", band: "ALL", from: "", to: "", flags: [] };
+  S.filters = { q: "", pic: [], status: [], priority: [], stream: [], band: [], from: "", to: "", flags: [] };
   syncFilterInputs(); applyFilters(); toast(t("filterCleared"), "ok");
 }
 function syncFilterInputs() {
   el("globalSearch").value = S.filters.q;
-  el("fPic").value = S.filters.pic;
-  el("fStatus").value = S.filters.status;
-  el("fPriority").value = S.filters.priority;
-  el("fStream").value = S.filters.stream;
-  el("fBand").value = S.filters.band;
+  [["fPic","pic"],["fStatus","status"],["fPriority","priority"],
+   ["fStream","stream"],["fBand","band"]].forEach(([h,k]) => paintMulti(h,k));
   el("fFrom").value = S.filters.from;
   el("fTo").value = S.filters.to;
 }
 function isFiltering() {
   const f = S.filters;
-  return !!(f.q || f.flags.length || f.from || f.to || f.pic !== "ALL" ||
-            f.status !== "ALL" || f.priority !== "ALL" || f.stream !== "ALL" || f.band !== "ALL");
+  return !!(f.q || f.flags.length || f.from || f.to || f.pic.length ||
+            f.status.length || f.priority.length || f.stream.length || f.band.length);
 }
 function focusItem(id) { openModal(id); }
 
@@ -780,7 +787,7 @@ async function loadData() {
 /** Nạp hạng mục nhỏ. Bảng chưa tồn tại thì app vẫn chạy, chỉ là không có tiến độ. */
 async function loadSubtasks() {
   S.subs = {};
-  if (S.demo) { DEMO_SUBS.forEach(addSubToStore); S.hasSubs = true; return; }
+  if (S.demo) { DEMO_SUBS.forEach(addSubToStore); S.hasSubs = true; S.hasSubFields = true; return; }
 
   const { data, error } = await S.sb.from("subtasks").select("*").order("sort_order", { ascending: true });
   if (error) {
@@ -789,7 +796,12 @@ async function loadSubtasks() {
     return;
   }
   S.hasSubs = true;
-  (data || []).forEach(addSubToStore);
+  // Dò xem đã chạy migrate_v4 chưa, để bật/tắt các ô mô tả, ưu tiên, trạng thái.
+  const rows = data || [];
+  S.hasSubFields = rows.length
+    ? Object.prototype.hasOwnProperty.call(rows[0], "status")
+    : true;                       // bảng rỗng thì cứ cho là có, lỗi sẽ tự lộ khi ghi
+  rows.forEach(addSubToStore);
 }
 
 function addSubToStore(s) {
@@ -801,7 +813,7 @@ function addSubToStore(s) {
    Mọi thao tác đều cập nhật màn hình trước rồi mới gửi lên, và hoàn tác nếu
    máy chủ báo lỗi — giao diện không bao giờ hiển thị thứ chưa lưu được.
    ========================================================================== */
-async function addSub(projectId, title) {
+async function addSub(projectId, title, extra) {
   const clean = String(title || "").trim();
   if (!clean) return;
   const list = S.subs[projectId] = S.subs[projectId] || [];
@@ -811,17 +823,27 @@ async function addSub(projectId, title) {
     toast(t("subDuplicate"), "err");
     return;
   }
-  const row = { id: "tmp-" + Date.now(), project_id: projectId, title: clean,
-                done: false, owner: null, due: null, sort_order: list.length };
 
-  if (S.demo) { list.push(row); afterSubChange(projectId); return; }
-  // Không có bảng thì từ chối ngay, thay vì giữ tạm rồi mất lúc tải lại.
+  const base = Object.assign({
+    project_id: projectId, title: clean, sort_order: list.length,
+    priority: "Medium", status: "Open", done: false, note: null, owner: null, due: null
+  }, extra || {});
+  if (base.status === "Done") base.done = true;
+
+  if (S.demo) { list.push(Object.assign({ id: "tmp-" + Date.now() }, base)); afterSubChange(projectId); return; }
   if (!S.hasSubs) { toast(t("subNoTable"), "err"); return; }
 
-  const { data, error } = await S.sb.from("subtasks")
-    .insert([{ project_id: projectId, title: clean, sort_order: list.length }]).select();
+  // Chỉ gửi những cột thật sự tồn tại, để bản chưa chạy migrate_v4 vẫn chạy được.
+  const payload = { project_id: projectId, title: clean, sort_order: list.length, done: base.done };
+  if (S.hasSubFields) {
+    payload.note = base.note; payload.priority = base.priority; payload.status = base.status;
+  }
+  if (base.owner) payload.owner = base.owner;
+  if (base.due)   payload.due = base.due;
+
+  const { data, error } = await S.sb.from("subtasks").insert([payload]).select();
   if (error) { toast(t("errSave")(error.message), "err"); return; }
-  list.push((data && data[0]) || row);
+  list.push((data && data[0]) || Object.assign({ id: "tmp-" + Date.now() }, base));
   afterSubChange(projectId);
 }
 
@@ -830,13 +852,27 @@ async function updateSub(projectId, subId, patch) {
   const s = list.find(x => String(x.id) === String(subId));
   if (!s) return;
 
+  // done và status là hai cách nói cùng một việc — luôn chỉnh cả hai cùng lúc,
+  // nếu không thanh tiến độ và ô trạng thái sẽ nói hai điều khác nhau.
+  if ("status" in patch) patch.done = (patch.status === "Done");
+  else if ("done" in patch && S.hasSubFields) patch.status = patch.done ? "Done" : (s.status === "Done" ? "Open" : (s.status || "Open"));
+
   const before = {};
   Object.keys(patch).forEach(k => { before[k] = s[k]; });
   Object.assign(s, patch);
   afterSubChange(projectId);
 
   if (S.demo || !S.hasSubs || String(subId).startsWith("tmp-")) return;
-  const { error } = await S.sb.from("subtasks").update(patch).eq("id", subId);
+
+  // Bỏ các cột chưa tồn tại nếu chưa chạy migrate_v4.
+  const send = {};
+  Object.keys(patch).forEach(k => {
+    if (!S.hasSubFields && ["note","priority","status"].includes(k)) return;
+    send[k] = patch[k];
+  });
+  if (!Object.keys(send).length) return;
+
+  const { error } = await S.sb.from("subtasks").update(send).eq("id", subId);
   if (error) { Object.assign(s, before); afterSubChange(projectId); toast(t("errSave")(error.message), "err"); }
 }
 
@@ -867,20 +903,99 @@ function afterLoad() {
 }
 
 function fillSelects() {
-  const A = t("all");
   const names = [...new Set(S.all.flatMap(picsOf))].sort((a,b) => a.localeCompare(b, LANG));
-  el("fPic").innerHTML = `<option value="ALL">${esc(A)}</option>` + names.map(n => `<option>${esc(n)}</option>`).join("");
   el("picList").innerHTML = names.map(n => `<option value="${esc(n)}"></option>`).join("");
-  if (!names.includes(S.filters.pic)) S.filters.pic = "ALL";
 
-  el("fStatus").innerHTML = `<option value="ALL">${esc(A)}</option>` + STATUSES.map(s => `<option>${s}</option>`).join("");
-  el("fPriority").innerHTML = `<option value="ALL">${esc(A)}</option>` + PRIORITIES.map(s => `<option>${s}</option>`).join("");
-  el("fBand").innerHTML = `<option value="ALL">${esc(A)}</option>` +
-    BANDS.map(b => `<option value="${b.key}">${esc(t("bands."+b.key))} · ${b.min}+</option>`).join("");
-  el("fStream").innerHTML = `<option value="ALL">${esc(A)}</option>` +
-    allStreams().map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
+  // Bỏ khỏi bộ lọc những tên không còn tồn tại, nếu không sẽ lọc ra rỗng mà
+  // người dùng không hiểu vì sao.
+  S.filters.pic = S.filters.pic.filter(n => names.includes(n));
+  const streamIds = allStreams().map(s => s.id);
+  S.filters.stream = S.filters.stream.filter(id => streamIds.includes(id));
+
+  buildMulti("fPic",      names.map(n => ({ v: n, label: n })),                       "pic");
+  buildMulti("fStatus",   STATUSES.map(s => ({ v: s, label: s })),                    "status");
+  buildMulti("fPriority", PRIORITIES.map(s => ({ v: s, label: s })),                  "priority");
+  buildMulti("fStream",   allStreams().map(s => ({ v: s.id, label: s.name })),        "stream");
+  buildMulti("fBand",     BANDS.map(b => ({ v: b.key, label: t("bands."+b.key) + " · " + b.min + "+" })), "band");
 
   syncFilterInputs();
+}
+
+/* ==========================================================================
+   Ô CHỌN NHIỀU
+   Thẻ <select> thường chỉ chọn được một giá trị; <select multiple> thì phải
+   giữ Ctrl và rất dễ bấm nhầm mất hết lựa chọn. Nên dùng nút bấm mở danh sách
+   có hộp tick — chọn bao nhiêu tùy ý, bấm ra ngoài là đóng.
+   ========================================================================== */
+function buildMulti(hostId, options, key) {
+  const host = el(hostId);
+  if (!host) return;
+  host.innerHTML = `
+    <button type="button" class="ms-btn" data-ms="${key}">
+      <span class="ms-label"></span><i class="bi bi-chevron-down"></i>
+    </button>
+    <div class="ms-pop d-none">
+      ${options.length > 8 ? `<input type="text" class="ms-search" placeholder="${esc(t("msSearch"))}" />` : ""}
+      <div class="ms-list">
+        ${options.map(o => `<label class="ms-opt"><input type="checkbox" value="${esc(o.v)}" /><span>${esc(o.label)}</span></label>`).join("")}
+      </div>
+      <div class="ms-foot">
+        <button type="button" class="linkbtn ms-all">${esc(t("msAll"))}</button>
+        <button type="button" class="linkbtn ms-none">${esc(t("msNone"))}</button>
+      </div>
+    </div>`;
+
+  const pop = host.querySelector(".ms-pop");
+  const boxes = () => Array.from(host.querySelectorAll(".ms-opt input"));
+
+  const commit = () => {
+    S.filters[key] = boxes().filter(b => b.checked).map(b => b.value);
+    paintMulti(hostId, key);
+    applyFilters();
+  };
+
+  host.querySelector(".ms-btn").addEventListener("click", e => {
+    e.stopPropagation();
+    const wasOpen = !pop.classList.contains("d-none");
+    closeAllMulti();
+    if (!wasOpen) pop.classList.remove("d-none");
+  });
+  pop.addEventListener("click", e => e.stopPropagation());
+  boxes().forEach(b => b.addEventListener("change", commit));
+  host.querySelector(".ms-all").addEventListener("click", () => { boxes().forEach(b => b.checked = true); commit(); });
+  host.querySelector(".ms-none").addEventListener("click", () => { boxes().forEach(b => b.checked = false); commit(); });
+
+  const search = host.querySelector(".ms-search");
+  if (search) search.addEventListener("input", e => {
+    const q = e.target.value.trim().toLowerCase();
+    host.querySelectorAll(".ms-opt").forEach(o =>
+      o.classList.toggle("d-none", !!q && !o.textContent.toLowerCase().includes(q)));
+  });
+
+  paintMulti(hostId, key);
+}
+
+/** Cập nhật chữ trên nút và trạng thái các hộp tick theo S.filters. */
+function paintMulti(hostId, key) {
+  const host = el(hostId);
+  if (!host) return;
+  const sel = S.filters[key] || [];
+  host.querySelectorAll(".ms-opt input").forEach(b => { b.checked = sel.includes(b.value); });
+
+  const lbl = host.querySelector(".ms-label");
+  if (!lbl) return;        // ô chưa được dựng — thoát êm, không làm chết cả trang
+  if (!sel.length) { lbl.textContent = t("all"); lbl.classList.remove("is-on"); }
+  else {
+    const first = host.querySelector(`.ms-opt input[value="${CSS.escape(sel[0])}"]`);
+    const name = first ? first.parentElement.textContent.trim() : sel[0];
+    lbl.textContent = sel.length === 1 ? name : t("msCount")(name, sel.length - 1);
+    lbl.classList.add("is-on");
+  }
+  host.classList.toggle("is-on", sel.length > 0);
+}
+
+function closeAllMulti() {
+  document.querySelectorAll(".ms-pop").forEach(p => p.classList.add("d-none"));
 }
 
 /* ==========================================================================
@@ -904,7 +1019,10 @@ function openModal(id) {
   el("mStatus").value   = p ? (p.status || "Open") : "Open";
   el("mNext").value     = p ? (p.next_steps || "") : "";
 
-  fillStreamSelect(p && p.stream ? String(p.stream) : "");
+  // Phải quy về mã chuẩn: dữ liệu có thể lưu tên hiển thị ("Product & Platform")
+  // trong khi các option dùng mã ("product"). Không quy đổi thì ô luôn về trống
+  // và người dùng phải chọn lại mỗi lần mở.
+  fillStreamSelect(p && p.stream ? canonicalStreamId(p.stream) : "");
   el("mStream").disabled = !S.hasStream;
   el("streamHint").textContent = S.hasStream ? t("streamHintOn") : t("streamHintOff");
 
@@ -1368,11 +1486,6 @@ function bindEvents() {
     document.body.style.removeProperty("padding-right");
   });
 
-  el("fPic").addEventListener("change", e => setFilter("pic", e.target.value));
-  el("fStatus").addEventListener("change", e => setFilter("status", e.target.value));
-  el("fPriority").addEventListener("change", e => setFilter("priority", e.target.value));
-  el("fStream").addEventListener("change", e => setFilter("stream", e.target.value));
-  el("fBand").addEventListener("change", e => setFilter("band", e.target.value));
   el("fFrom").addEventListener("change", e => setFilter("from", e.target.value));
   el("fTo").addEventListener("change", e => setFilter("to", e.target.value));
 
@@ -1396,6 +1509,7 @@ function bindEvents() {
 
   document.addEventListener("click", e => {
     if (!e.target.closest(".searchbox")) closeSuggestions();
+    if (!e.target.closest(".multi")) closeAllMulti();
   });
 
   el("modeSeg").addEventListener("click", e => {

@@ -948,28 +948,159 @@ function paintSubRows() {
   });
 }
 
+
+/* ==========================================================================
+   THANH BẬC SẮP XẾP — kiểu Excel
+   Bấm tiêu đề cột = đặt làm bậc 1 (xóa các bậc cũ).
+   Giữ Shift rồi bấm = thêm một bậc phía sau, bậc trước giữ nguyên thứ tự.
+   DataTables đã hỗ trợ sẵn, nhưng không ai đoán ra nếu không hiện lên màn hình,
+   nên vẽ các bậc đang áp dụng thành chip có thể gỡ.
+   ========================================================================== */
+function renderSortBar() {
+  const bar = el("sortBar");
+  if (!bar || !itemsTable) return;
+
+  const order = itemsTable.order();      // [[cột, chiều], ...]
+  const names = itemsTable.columns().header().toArray().map(th => th.textContent.trim());
+
+  if (!order.length) { bar.innerHTML = ""; return; }
+
+  bar.innerHTML = `<span class="sb-lbl">${esc(t("sortBy"))}</span>` +
+    order.map(([c, d], i) => `
+      <span class="sb-chip">
+        <b>${i + 1}</b>${esc(names[c] || "—")}
+        <i class="bi bi-arrow-${d === "asc" ? "up" : "down"}"></i>
+        <button class="sb-x" data-drop="${i}" title="${esc(t("sortRemove"))}">
+          <i class="bi bi-x"></i></button>
+      </span>`).join("") +
+    (order.length > 1 ? `<button class="linkbtn sb-clear">${esc(t("sortReset"))}</button>` : "") +
+    `<span class="sb-hint">${esc(t("sortHint"))}</span>`;
+
+  bar.querySelectorAll("[data-drop]").forEach(b => b.addEventListener("click", () => {
+    const rest = order.filter((_, i) => i !== +b.dataset.drop);
+    itemsTable.order(rest.length ? rest : [[2, "desc"]]).draw();
+  }));
+  const cl = bar.querySelector(".sb-clear");
+  if (cl) cl.addEventListener("click", () => itemsTable.order([[2, "desc"]]).draw());
+}
+
 function subRowHtml(projectId) {
   const list = S.subs[projectId] || [];
-  return `<div class="subrow">
-    ${list.map(s => `
-      <div class="subrow-item ${s.done ? "is-done" : ""}" data-sub="${esc(s.id)}">
+  const F = S.hasSubFields;
+
+  const row = s => {
+    const late = !s.done && s.due && toDate(s.due) < today0();
+    const pr = s.priority || "Medium";
+    const st = s.status || (s.done ? "Done" : "Open");
+    return `<div class="subrow-item ${s.done ? "is-done" : ""}" data-sub="${esc(s.id)}">
+      <button class="sub-tick" data-tick="${esc(s.id)}" title="${esc(t("subToggle"))}">
         <i class="bi ${s.done ? "bi-check-square-fill" : "bi-square"}"></i>
-        <span class="subrow-title">${esc(s.title)}</span>
-        <span class="subrow-owner">${s.owner ? avatar(s.owner, "sm") : ""}</span>
-        <span class="subrow-due ${!s.done && s.due && toDate(s.due) < today0() ? "is-late" : ""}">${s.due ? fmtDate(s.due) : "—"}</span>
-      </div>`).join("")}
-    <button class="subrow-add" data-open="${esc(projectId)}"><i class="bi bi-plus-lg"></i> ${esc(t("subAdd"))}</button>
+      </button>
+
+      <div class="sub-main">
+        <input class="sub-inp sub-title" data-f="title" value="${esc(s.title)}" />
+        ${F ? `<input class="sub-inp sub-note" data-f="note" value="${esc(s.note || "")}"
+                 placeholder="${esc(t("subNotePh"))}" />` : ""}
+      </div>
+
+      ${F ? `<select class="sub-pick sub-prio" data-f="priority"
+               style="background:${PRIORITY_COLOR[pr]}1F;color:${PRIORITY_COLOR[pr]}">
+          ${PRIORITIES.map(o => `<option${o === pr ? " selected" : ""}>${o}</option>`).join("")}
+        </select>
+        <select class="sub-pick sub-stat" data-f="status"
+               style="background:${STATUS_COLOR[st]}1F;color:${STATUS_COLOR[st]}">
+          ${STATUSES.map(o => `<option${o === st ? " selected" : ""}>${o}</option>`).join("")}
+        </select>` : ""}
+
+      <input class="sub-inp sub-own" data-f="owner" list="picList"
+             value="${esc(s.owner || "")}" placeholder="${esc(t("unassigned"))}" />
+      <input class="sub-inp sub-date ${late ? "is-late" : ""}" data-f="due" type="date"
+             value="${s.due ? String(s.due).slice(0,10) : ""}" />
+      <button class="icon-btn danger sub-del" data-del="${esc(s.id)}"
+              title="${esc(t("delete"))}"><i class="bi bi-trash3"></i></button>
+    </div>`;
+  };
+
+  return `<div class="subrow">
+    ${list.length ? `<div class="subrow-head">
+        <span class="sh-tick"></span>
+        <span class="sh-main">${esc(t("subColTitle"))}</span>
+        ${F ? `<span class="sh-prio">${esc(t("priority"))}</span>
+               <span class="sh-stat">${esc(t("status"))}</span>` : ""}
+        <span class="sh-own">${esc(t("owner"))}</span>
+        <span class="sh-date">${esc(t("colDue"))}</span>
+        <span class="sh-act"></span>
+      </div>` : ""}
+    ${list.map(row).join("")}
+
+    ${F ? "" : `<div class="sub-upgrade">${esc(t("subNeedV4"))}</div>`}
+
+    <div class="subrow-new">
+      <i class="bi bi-plus-lg"></i>
+      <input class="sub-inp sub-new-inp" data-newsub="${esc(projectId)}"
+             placeholder="${esc(t("subAddPh"))}" />
+      <span class="sub-new-hint">${esc(t("subAddHint"))}</span>
+    </div>
   </div>`;
 }
 
 function bindSubRow(node, projectId) {
   const $n = $(node);
-  $n.find(".subrow-item").off("click").on("click", function () {
-    const id = this.getAttribute("data-sub");
+  const idOf = elm => $(elm).closest(".subrow-item").attr("data-sub");
+
+  /* tick hoàn thành */
+  $n.find("[data-tick]").off("click").on("click", function (e) {
+    e.stopPropagation();
+    const id = this.getAttribute("data-tick");
     const s = (S.subs[projectId] || []).find(x => String(x.id) === String(id));
-    if (s) updateSub(projectId, id, { done: !s.done });     // tick ngay trong bảng
+    if (s) updateSub(projectId, id, { done: !s.done });
   });
-  $n.find(".subrow-add").off("click").on("click", function () { focusItem(this.getAttribute("data-open")); });
+
+  /* ô chọn: đổi là lưu ngay */
+  $n.find(".sub-pick").off("change").on("change", function () {
+    const patch = {}; patch[this.getAttribute("data-f")] = this.value;
+    updateSub(projectId, idOf(this), patch);
+  });
+
+  /* ô nhập: lưu khi rời ô hoặc nhấn Enter, Esc để hủy */
+  $n.find(".sub-inp:not(.sub-new-inp)").each(function () {
+    const inp = this, orig = inp.value;
+    let done = false;
+    const commit = () => {
+      if (done) return; done = true;
+      const f = inp.getAttribute("data-f");
+      let val = inp.value.trim();
+      if (f === "title" && !val) { inp.value = orig; return; }   // không cho xóa trắng tên
+      if (val === orig) return;
+      const patch = {}; patch[f] = val || null;
+      updateSub(projectId, idOf(inp), patch);
+    };
+    $(inp).off("blur").on("blur", commit);
+    $(inp).off("keydown").on("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); inp.blur(); }
+      if (e.key === "Escape") { done = true; inp.value = orig; inp.blur(); }
+    });
+    $(inp).off("click").on("click", e => e.stopPropagation());
+  });
+
+  /* xóa */
+  $n.find("[data-del]").off("click").on("click", function (e) {
+    e.stopPropagation();
+    const id = this.getAttribute("data-del");
+    const s = (S.subs[projectId] || []).find(x => String(x.id) === String(id));
+    if (s && confirm(t("subDeleteConfirm")(s.title))) deleteSub(projectId, id);
+  });
+
+  /* thêm mới ngay trong bảng — không phải mở popup nữa */
+  $n.find("[data-newsub]").off("keydown").on("keydown", function (e) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const val = this.value.trim();
+    if (!val) return;
+    this.value = "";
+    addSub(projectId, val);
+  });
+  $n.find("[data-newsub]").off("click").on("click", e => e.stopPropagation());
 }
 
 function renderList() {
@@ -990,11 +1121,13 @@ function renderList() {
     itemsTable.rows().every(function () { this.child.remove(); });
     itemsTable.clear().rows.add(rows).draw(false);
     paintSubRows();
+    renderSortBar();
     return;
   }
 
   itemsTable = new DataTable("#itemsTable", {
     data: rows, pageLength: 25, order: [[2, "desc"]],   // cột Rủi ro dịch sang phải 1 vì có thêm cột Tiến độ
+    orderMulti: true,          // giữ nhiều bậc sắp xếp cùng lúc, kiểu Excel
     columns: [
       { data: "title", render: (v, ty, r) => ty !== "display" ? v : (() => {
           const n = (S.subs[r.id] || []).length;
@@ -1054,6 +1187,9 @@ function renderList() {
       paginate: { first: t("dtFirst"), last: t("dtLast"), next: t("dtNext"), previous: t("dtPrev") }
     }
   });
+  itemsTable.on("order.dt", function () { renderSortBar(); });
+  renderSortBar();
+
   $("#itemsTable tbody").on("click", "[data-open]", function () { focusItem(this.getAttribute("data-open")); });
 
   $("#itemsTable tbody").on("click", "[data-expand]", function (e) {
