@@ -829,13 +829,17 @@ function renderGantt() {
   const span = Math.max(1, daysBetween(min, max));
   const posOf = d => daysBetween(min, d) / span * 100;
 
-  let ticks = "";
+  // Vạch tháng và TÊN tháng phải tách nhau: tên chỉ vẽ một lần ở hàng tiêu đề.
+  // Trước đây cả hai được nhồi vào mọi hàng nên mỗi dòng lại hiện lại "Aug 2026,
+  // Sep 2026…" chồng lên thanh tiến độ.
+  let tickLines = "", tickNames = "";
   const m = new Date(min.getFullYear(), min.getMonth() + 1, 1);
   while (m <= max) {
     const left = posOf(m);
     const label = LANG === "vi" ? `Th${m.getMonth()+1} ${m.getFullYear()}`
       : m.toLocaleString("en", { month: "short" }) + " " + m.getFullYear();
-    ticks += `<div class="month-tick" style="left:${left}%"></div><div class="month-name" style="left:${left}%">${label}</div>`;
+    tickLines += `<div class="month-tick" style="left:${left}%"></div>`;
+    tickNames += `<div class="month-name" style="left:${left}%">${label}</div>`;
     m.setMonth(m.getMonth() + 1);
   }
   const nowLeft = posOf(now);
@@ -843,7 +847,7 @@ function renderGantt() {
   el("gantt").innerHTML = `
     <div class="gantt-head">
       <div class="gantt-label"><span class="lbl" style="margin:0">${esc(t("colItemHead"))}</span></div>
-      <div class="gantt-lane" style="height:22px">${ticks}
+      <div class="gantt-lane" style="height:22px">${tickLines}${tickNames}
         <div class="now-line" style="left:${nowLeft}%"></div>
         <div class="now-flag" style="left:${nowLeft}%">NOW</div></div>
     </div>` +
@@ -869,10 +873,10 @@ function renderGantt() {
 
       return `<div class="gantt-row" data-id="${esc(p.id)}">
         <div class="gantt-label">
-          <div class="gantt-title">${esc(p.title)} ${progBadge(p, { bar: false })}</div>
-          <div class="gantt-meta">${esc(picsOf(p).join(", "))} · ${e ? fmtDate(p.timeline_end) : esc(t("noDueDate"))}</div>
+          <div class="gantt-title">${esc(p.title)}</div>
+          <div class="gantt-meta">${esc(picsOf(p).join(", "))} · ${e ? fmtDate(p.timeline_end) : esc(t("noDueDate"))}${progBadge(p, { bar: false })}</div>
         </div>
-        <div class="gantt-lane">${ticks}<div class="now-line" style="left:${nowLeft}%;opacity:.32"></div>${bar}${subMarks}</div>
+        <div class="gantt-lane">${tickLines}<div class="now-line" style="left:${nowLeft}%;opacity:.32"></div>${bar}${subMarks}</div>
       </div>`;
     }).join("");
 
