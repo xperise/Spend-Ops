@@ -7,6 +7,7 @@ const KEY = 'mlx-spend-proto-v7';
 const $ = (s, r=document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = n => Math.round(n || 0).toLocaleString('vi-VN');
+const BANK0 = [['VCB','Vietcombank'],['BIDV','BIDV'],['CTG','VietinBank'],['AGR','Agribank'],['TCB','Techcombank'],['MBB','MB Bank'],['ACB','ACB'],['VPB','VPBank'],['TPB','TPBank'],['STB','Sacombank'],['HDB','HDBank'],['VIB','VIB'],['SHB','SHB'],['MSB','MSB'],['OCB','OCB'],['SEAB','SeABank'],['LPB','LPBank'],['EIB','Eximbank'],['NAB','Nam A Bank'],['BAB','Bắc Á Bank'],['KLB','Kienlongbank'],['SGB','Saigonbank'],['PVC','PVcomBank'],['VAB','VietABank'],['NCB','NCB'],['BVB','BaoViet Bank'],['PGB','PGBank'],['ABB','An Bình Bank'],['UOB','UOB Việt Nam'],['SCB','SCB'],['WOO','Woori Việt Nam']].map(([code,name]) => ({id:'bk'+code, code, name}));
 const money = n => fmt(n) + ' đ';
 const short = n => n >= 1e9 ? (n/1e9).toLocaleString('vi-VN',{maximumFractionDigits:2}) + ' tỷ'
   : n >= 1e6 ? (n/1e6).toLocaleString('vi-VN',{maximumFractionDigits:1}) + ' triệu'
@@ -189,7 +190,7 @@ function seed(){
 
 /* ===================== Trạng thái ===================== */
 let S;
-let UI = {view:'home', id:null, listTab:'mine', cfgTab:'request', draft:null, sim:null, form:null, errors:{}, inboxSel:{}, batchSel:{}, payDraft:null, flt:{q:'',from:'',to:'',pm:'',cat:'',who:''}, bflt:{q:'',from:'',to:'',pm:''}, qflt:{pm:''}, rflt:{q:'',from:'',to:'',pm:'',cat:'',who:''}, cfgRule:null, vq:'', rtab:'history', paySel:{}, bpm:''};
+let UI = {view:'home', id:null, listTab:'mine', cfgTab:'request', draft:null, sim:null, form:null, errors:{}, inboxSel:{}, batchSel:{}, payDraft:null, flt:{q:'',from:'',to:'',pm:'',cat:'',who:''}, bflt:{q:'',from:'',to:'',pm:''}, qflt:{pm:''}, rflt:{q:'',from:'',to:'',pm:'',cat:'',who:''}, cfgRule:null, vq:'', rtab:null, paySel:{}, bpm:''};
 /* save(): ghi lên Supabase sau 0,4 giây không thao tác (xem khối Lưu trữ ở cuối file). */
 function save(){ if (!S || !SB) return; dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(pushState, 400); }
 
@@ -466,6 +467,8 @@ const invPending = r => r.evidence === 'later' && r.status === 'paid' && !r.invD
 const invWaitList = () => S.reqs.filter(invPending).sort((a,b) => a.invDue - b.invDue);
 
 /* ===================== Quyền xem ===================== */
+const canCfg = u => !!u && !!(u.admin || u.cfg);          // Cấu hình: Đề xuất chi, Đợt chi (Người dùng: chỉ Quản trị)
+const canMaster = u => !!u && !!(u.admin || u.acct || u.master); // Master Data: NCC, ngân hàng, hạng mục
 function canSeeAll(u){ return u.admin || u.acct || u.signer || u.dash; }   // người xem dashboard/báo cáo thấy toàn công ty
 function visibleReqs(){
   const u = me();
@@ -485,7 +488,7 @@ function go(view, id, extra){
   UI.view = view; UI.id = id || null; UI.errors = {};
   if (view === 'new') UI.form = formFrom(newReq({dept: me().dept}));
   if (view === 'edit') UI.form = formFrom(req(id));
-  if (view === 'config') { if (!me().admin && !['cats','vendors'].includes(UI.cfgTab)) UI.cfgTab = 'cats'; UI.draft = {config: clone(S.config)}; UI.sim = UI.sim || {requester:'u1', dept:'OPS', amount:12000000, evidence:'vat'}; }
+  if (view === 'config') { if (!me().admin && UI.cfgTab === 'users') UI.cfgTab = 'request'; UI.draft = {config: clone(S.config)}; UI.sim = UI.sim || {requester:'u1', dept:'OPS', amount:12000000, evidence:'vat'}; }
   if (view === 'batch') { UI.paySel = {}; UI.bpm = ''; }
   if (view === 'batches') UI.batchSel = UI.batchSel || {};
   if (view === 'delegate') UI.dg = {from:S.me, to:'', mode:'none', start:localDate(), end:'', note:'', err:''};
@@ -524,23 +527,22 @@ function renderSide(){
     ['inbox','check','Chờ tôi duyệt',inbox],
     ...(seesBatches(u) ? [['batches','wallet','Đợt chi',bcount]] : []),
     ['delegate','swap','Ủy quyền duyệt',0],
-    ['profile','users','Tài khoản cá nhân',0],
-    ['reports','chart','Lịch sử, báo cáo',0],
-    ...(canDash(u) ? [['dash','chart','Dashboard quản trị',0]] : []),
-    ...(u.admin ? [['users','users','Người dùng',0]] : []), ...((u.admin || u.acct) ? [['config','gear','Cấu hình',0]] : [])
+    ['reports','chart','Báo cáo',0],
+    ...(canMaster(u) ? [['master','file','Master Data',0]] : []),
+    ...(canCfg(u) ? [['config','gear','Cấu hình',0]] : [])
   ];
   const active = ({new:'list', edit:'list', detail:'list', batch:'batches'})[UI.view] || UI.view;
   $('#side').innerHTML = `
     <div class="brand"><span class="logo" role="img" aria-label="Xperise"></span><small>Spend Ops · Đề xuất chi</small></div>
-    <label class="persona">${avatar(u.id)}<span class="who"><b>${esc(u.name)}</b><span>${esc(u.title)}</span></span><span class="chev">${icon('chev',16)}</span>
-      </label>
+    <button type="button" class="persona" data-go="profile" title="Tài khoản cá nhân">${avatar(u.id)}<span class="who"><b>${esc(u.name)}</b><span>${esc(u.title)}</span></span><span class="chev">${icon('chev',16)}</span>
+      </button>
     <p class="persona-cap">${esc(roleLine(u))}</p>
     <nav class="nav" aria-label="Điều hướng">${nav.map(n => `<button class="${active===n[0]?'on':''}" data-go="${n[0]}">${icon(n[1])}<span>${n[2]}</span>${n[3] ? `<span class="cnt">${n[3]}</span>` : ''}</button>`).join('')}</nav>
     <div class="side-foot"><span>Đăng nhập: ${esc(SESSION_EMAIL || '')}</span><button class="linkbtn" data-action="logout">Đăng xuất</button></div>`;
 }
 function renderMain(){
   const v = UI.view; const m = $('#main');
-  const views = {home:viewHome, list:viewList, inbox:viewInbox, new:viewForm, edit:viewForm, detail:viewDetail, batches:viewBatches, batch:viewBatch, delegate:viewDelegate, profile:viewProfile, reports:viewReports, dash:() => canDash(me()) ? viewDash() : `<div class="card empty"><b>Chỉ người được phân quyền mới xem được dashboard</b>Nhờ quản trị bật quyền “Dashboard quản trị” cho bạn.</div>`, users:() => me().admin ? viewUsers() : `<div class="card empty"><b>Chỉ Quản trị quản lý người dùng</b></div>`, config:() => (me().admin || me().acct) ? viewConfig() : `<div class="card empty"><b>Chỉ Quản trị và Kế toán mở được cấu hình</b>Đổi vai sang Quản trị hệ thống ở góc trái.</div>`};
+  const views = {home:viewHome, list:viewList, inbox:viewInbox, new:viewForm, edit:viewForm, detail:viewDetail, batches:viewBatches, batch:viewBatch, delegate:viewDelegate, profile:viewProfile, reports:viewReports, master:() => canMaster(me()) ? viewMaster() : `<div class="card empty"><b>Chỉ người có quyền Master Data mở được mục này</b></div>`, dash:() => canDash(me()) ? (UI.rtab = 'dash', viewReports()) : `<div class="card empty"><b>Chỉ người được phân quyền mới xem được dashboard</b>Nhờ quản trị bật quyền “Dashboard quản trị” cho bạn.</div>`, users:() => me().admin ? (UI.cfgTab = 'users', viewConfig()) : `<div class="card empty"><b>Chỉ Quản trị quản lý người dùng</b></div>`, config:() => canCfg(me()) ? viewConfig() : `<div class="card empty"><b>Chỉ Quản trị và Kế toán mở được cấu hình</b>Đổi vai sang Quản trị hệ thống ở góc trái.</div>`};
   m.innerHTML = (views[v] || viewHome)();
   if (v === 'new' || v === 'edit') updatePreview();
   if (v === 'config') updateSim();
@@ -769,7 +771,7 @@ function formFrom(r){
   const sum = linesSum(lines,'total');
   return {id:r.id, isNew, type:r.type||'opex', title:r.title, amount:r.amount, amountManual: !!r.amount && r.amount !== sum, dept:r.dept, cat:isNew ? ((S.cats.find(g => g[1].length) || [0,['Khác']])[1][0]) : r.cat, evidence:r.evidence, payMethod:r.payMethod||'transfer',
     payeeType:r.payee.type === 'other' ? 'vendor' : r.payee.type, vendorId:r.payee.vendorId||'v1', outlay:r.payee.outlay||'transfer', other: r.payee.type === 'other' ? {name:r.payee.name, acc:r.payee.acc, bank:r.payee.bank} : {name:'', acc:'', bank:''},
-    needBy:r.needBy||'', settleDue: r.settleDue ? localDate(r.settleDue) : '', note:r.note||'', files:clone(r.files), lines, status:r.status};
+    needBy:r.needBy||'', settleDue: r.settleDue ? localDate(r.settleDue) : '', booking: clone(r.booking||{}), invDate: r.invDate||'', note:r.note||'', files:clone(r.files), lines, status:r.status};
 }
 function linesTable(f){
   return `<div class="tw"><table class="lines"><thead><tr><th style="width:104px">Số hoá đơn</th><th>Diễn giải</th><th class="r" style="width:118px">Trước thuế</th><th style="width:78px">Thuế suất</th><th class="r" style="width:104px">Tiền thuế</th><th class="r" style="width:118px">Thành tiền</th><th style="width:34px"></th></tr></thead>
@@ -844,6 +846,15 @@ function viewForm(){
         ${f.evidence === 'advance' ? '' : `<div class="f full"><span class="flabel">Tiền và thuế</span>${linesTable(f)}${E.lines?`<span class="ferr">${E.lines}</span>`:''}</div>`}
         <label class="f">Số tiền đề nghị thanh toán lần này<div class="money"><input class="in ${E.amount?'err':''}" name="amount" inputmode="numeric" value="${f.amount?fmt(f.amount):''}" placeholder="0" data-money autocomplete="off"><span>đ</span></div>${E.amount?`<span class="ferr">${E.amount}</span>`:''}<span class="hint" id="amtHint">${esc(amountHint(f))}</span></label>
         <div class="f"><span class="flabel">Thanh toán nhiều đợt</span><span class="hint" style="font-size:12.5px">Đặt cọc hoặc trả theo đợt: giữ bảng trên theo tổng giá trị, sửa ô bên trái thành số tiền của đợt này.</span></div>`}
+        <div class="f full"><span class="flabel">Thông tin booking và hoá đơn (không bắt buộc)</span>
+          <div class="fgrid">
+            <label class="f">Khách sạn<input class="in" name="hotel" value="${esc((f.booking||{}).hotel||'')}" autocomplete="off"></label>
+            <label class="f">Mã booking<input class="in" name="bcode" value="${esc((f.booking||{}).code||'')}" autocomplete="off"></label>
+            <label class="f">Khách<input class="in" name="guest" value="${esc((f.booking||{}).guest||'')}" autocomplete="off"></label>
+            <label class="f">Ngày hoá đơn<input class="in" type="date" name="invDate" value="${esc(f.invDate||'')}"></label>
+            <label class="f">Check-in<input class="in" type="date" name="checkin" value="${esc((f.booking||{}).checkin||'')}"></label>
+            <label class="f">Check-out<input class="in" type="date" name="checkout" value="${esc((f.booking||{}).checkout||'')}"></label>
+          </div></div>
         <div class="f full"><span class="flabel">Đính kèm</span>
           ${f.files.length ? `<div class="flist">${f.files.map((x,i) => `<div class="frow">${icon('file',15)}<span class="fname">${esc(fname(x.name))}</span><select class="in" data-fkind="${i}" aria-label="Loại file ${esc(x.name)}">${Object.entries(FKIND).map(([k,n]) => `<option value="${k}" ${x.kind===k?'selected':''}>${n}</option>`).join('')}</select><button type="button" class="copy" data-rmfile="${i}" aria-label="Bỏ ${esc(x.name)}">${icon('x')}</button></div>`).join('')}</div>` : ''}
           <div class="row"><label class="btn sec sm" style="position:relative">${icon('clip',14)} Thêm file<input type="file" multiple data-files style="position:absolute;opacity:0;width:1px;height:1px"></label><span class="hint">Chọn loại cho từng file. Mọi loại chứng từ đều đính kèm được, kể cả khi chưa có hoá đơn.</span></div>
@@ -863,7 +874,8 @@ function viewForm(){
 function readForm(){
   const fm = $('#reqForm'); if (!fm) return; const fd = new FormData(fm); const f = UI.form;
   f.type = fd.get('type') || 'opex'; f.title = (fd.get('title')||'').trim(); f.dept = fd.get('dept'); if (fd.get('cat')) f.cat = fd.get('cat');
-  f.needBy = fd.get('needBy')||''; f.settleDue = fd.get('settleDue')||''; f.note = (fd.get('note')||'').trim();
+  f.needBy = fd.get('needBy')||''; f.settleDue = fd.get('settleDue')||'';
+  f.booking = {hotel:(fd.get('hotel')||'').trim(), code:(fd.get('bcode')||'').trim(), guest:(fd.get('guest')||'').trim(), checkin:fd.get('checkin')||'', checkout:fd.get('checkout')||''}; f.invDate = fd.get('invDate')||''; f.note = (fd.get('note')||'').trim();
   if (fd.get('evidence')) f.evidence = fd.get('evidence'); if (fd.get('payMethod')) f.payMethod = fd.get('payMethod');
   if (fd.get('payeeType')) f.payeeType = fd.get('payeeType');
   if (fd.get('vendorId')) f.vendorId = fd.get('vendorId'); if (fd.get('outlay')) f.outlay = fd.get('outlay');
@@ -930,6 +942,7 @@ function validate(f){
 }
 function applyForm(r, f){
   const refund = f.type === 'refund';
+  r.booking = Object.fromEntries(Object.entries(f.booking || {}).filter(([k,v]) => String(v || '').trim() !== '')); if (!Object.keys(r.booking).length) delete r.booking; r.invDate = f.invDate || undefined;
   if (!refund && f.evidence === 'advance' && f.settleDue) r.settleDue = new Date(f.settleDue + 'T23:59:59').getTime(); else if (f.evidence !== 'advance') delete r.settleDue;
   Object.assign(r, {type:f.type, title:f.title || 'Nháp chưa đặt tên', amount:f.amount, dept:f.dept, cat: refund ? REFUND_CAT : f.cat, evidence: refund ? 'bill' : f.evidence, needBy:f.needBy, note:f.note, files:clone(f.files),
     lines: refund ? [{inv:'', desc:f.title, pre:f.amount, rate:'kct', tax:0, total:f.amount}] : clone(f.lines.filter(l => l.total || l.inv || l.desc)),
@@ -1283,12 +1296,11 @@ function inConfig(id, C){ C = C || S.config; return C.rules.some(rl => rl.bands.
 function viewConfig(){
   if (!UI.draft) UI.draft = {config: clone(S.config)};
   const D = UI.draft; const admin = me().admin;
-  const tabs = admin ? [['request','Đề xuất chi'],['batch','Đợt chi'],['cats','Hạng mục chi phí'],['vendors','NCC / người nhận']]
-    : [['cats','Hạng mục chi phí'],['vendors','NCC / người nhận']];
-  const tab = tabs.some(t => t[0] === UI.cfgTab) ? UI.cfgTab : tabs[0][0]; UI.cfgTab = tab;
-  const body = tab === 'request' ? `${cfgMatrix(D)}${cfgRules(D)}` : tab === 'batch' ? cfgBatch(D) : tab === 'cats' ? cfgCats() : vendorsDirHtml();
+  const tabs = [['request','Đề xuất chi'],['batch','Đợt chi']].concat(admin ? [['users','Người dùng']] : []);
+  const tab = tabs.some(t => t[0] === UI.cfgTab) ? UI.cfgTab : 'request'; UI.cfgTab = tab;
   const approval = tab === 'request' || tab === 'batch';
-  return `${head('Quản trị','Cấu hình', admin ? `Đang áp dụng v${S.config.version}, cập nhật ${dt(S.config.updatedAt)} bởi ${esc(user(S.config.updatedBy)?.name||'—')}. Thay đổi phê duyệt chỉ áp cho đề xuất gửi sau khi lưu.` : 'Hạng mục chi phí và danh bạ NCC: thay đổi có hiệu lực ngay.')}
+  const body = tab === 'request' ? `${cfgMatrix(D)}${cfgRules(D)}` : tab === 'batch' ? cfgBatch(D) : viewUsers(true);
+  return `${head('Quản trị','Cấu hình', admin ? `Đang áp dụng v${S.config.version}, cập nhật ${dt(S.config.updatedAt)} bởi ${esc(user(S.config.updatedBy)?.name||'—')}. Thay đổi phê duyệt chỉ áp cho đề xuất gửi sau khi lưu.` : 'Phần phê duyệt được phân quyền.')}
   <div class="tabs" role="tablist">${tabs.map(t => `<button role="tab" aria-selected="${tab===t[0]}" class="${tab===t[0]?'on':''}" data-cfgtab="${t[0]}">${t[1]}</button>`).join('')}</div>
   <div class="${approval ? 'g75' : ''}">
     <div class="stack">${body}</div>
@@ -1355,7 +1367,7 @@ function cfgMatrix(D){
 }
 function catUse(c){ return S.reqs.filter(r => r.cat === c).length; }
 function cfgCats(){
-  return `<p class="small muted" style="margin:0">Hạng mục người đề xuất chọn khi tạo phiếu, gom theo nhóm để báo cáo. Kế toán và Quản trị được thêm, sửa tên, xoá. Thay đổi có hiệu lực ngay, không cần lưu.</p>
+  return `<p class="small muted" style="margin:0">Hạng mục người đề xuất chọn khi tạo phiếu, gom theo nhóm để báo cáo. Người có quyền Master Data được thêm, sửa tên, xoá. Thay đổi có hiệu lực ngay, không cần lưu.</p>
   ${S.cats.map((g,gi) => `<div class="card"><div class="ch"><div class="row"><h2 class="card-title">${esc(g[0])}</h2><button type="button" class="copy" data-editgroup="${gi}" aria-label="Sửa tên nhóm ${esc(g[0])}" title="Sửa tên nhóm">${icon('edit',14)}</button></div><div class="row"><span class="card-note">${g[1].length} hạng mục</span>${g[1].length ? '' : `<button class="btn ghost sm" data-rmgroup="${gi}" style="color:var(--critical)">Xoá nhóm</button>`}</div></div>
       <div class="chips">${g[1].map((c,ci) => { const n = catUse(c); return `<span class="chip" style="padding-left:10px">${esc(c)}${n ? `<span class="lvn">${n} phiếu</span>` : ''}<button type="button" data-editcat="${gi}.${ci}" aria-label="Sửa ${esc(c)}" title="Sửa tên">${icon('edit',12)}</button><button type="button" data-rmcat="${gi}.${ci}" aria-label="Xoá ${esc(c)}">${icon('x',12)}</button></span>`; }).join('') || '<span class="small faint">Chưa có hạng mục</span>'}</div>
       <form class="row catadd" data-g="${gi}" style="margin-top:12px"><input class="in" name="name" placeholder="Tên hạng mục mới" autocomplete="off" style="flex:1;max-width:320px;height:34px" aria-label="Tên hạng mục mới trong nhóm ${esc(g[0])}"><button class="btn sec sm" type="submit">${icon('plus',14)} Thêm</button></form></div>`).join('')}
@@ -1458,10 +1470,10 @@ function bankModal(){
   modal(`<form class="modal" id="bankForm" role="dialog" aria-modal="true" aria-labelledby="bkh" novalidate>
     <div class="modal-h"><h3 id="bkh">Tài khoản cá nhân</h3><p>Tài khoản nhận tiền khi bạn chọn “Hoàn ứng cho tôi”. Kiểm tra kỹ số tài khoản trước khi lưu.</p></div>
     <div class="modal-b"><div class="fgrid">
-      <label class="f">Ngân hàng<input class="in" name="bank" list="bankList" value="${esc(b.bank || '')}" placeholder="VD: Vietcombank" autocomplete="off"></label>
+      <label class="f">Ngân hàng${bankSelect(b.bank)}<span class="hint" data-bankcode>${esc(bankCodeText(b.bank))}</span></label>
       <label class="f">Số tài khoản<input class="in" name="acc" inputmode="numeric" value="${esc(b.acc || '')}" autocomplete="off"></label>
       <label class="f full">Tên chủ tài khoản<input class="in" name="accName" value="${esc(b.accName || '')}" autocomplete="off" placeholder="NGUYEN VAN A"><span class="hint">Viết IN HOA, không dấu, đúng như trên ngân hàng.</span></label>
-    </div><datalist id="bankList">${BANKS.map(x => `<option value="${esc(x)}">`).join('')}</datalist><div id="mErr" style="margin-top:12px"></div></div>
+    </div><div id="mErr" style="margin-top:12px"></div></div>
     <div class="modal-f"><button type="button" class="btn sec" data-close="1">Huỷ</button><button type="submit" class="btn pri">Lưu tài khoản</button></div></form>`, 520);
 }
 function viewProfile(){
@@ -1593,6 +1605,7 @@ function vendorExport(){
 function vendorRowCheck(v, selfId){
   if (v.name.length < 3) return 'Tên NCC thiếu hoặc quá ngắn';
   if (!v.bank) return 'Thiếu ngân hàng';
+  if (!bankByName(v.bank)) return 'Ngân hàng không có trong danh sách';
   if (!v.acc) return 'Thiếu số tài khoản';
   if (!/^[0-9A-Z]{4,24}$/.test(v.acc)) return 'Số tài khoản không hợp lệ (4 đến 24 ký tự số hoặc chữ)';
   if (!v.accName) return 'Thiếu tên tài khoản';
@@ -1615,7 +1628,7 @@ function parseVendorRows(wb){
     const name = get('name'); if (!name && !get('acc')) continue;
     const line = i + 1;
     if (/^vi du/i.test(noAccent(name))) { out.push({line, name, action:'skip', msg:'dòng ví dụ'}); continue; }
-    const v = {name, tax:get('tax').replace(/\s/g,''), bank:get('bank'), acc:get('acc').replace(/\s/g,'').toUpperCase(), accName:bankText(get('accName'))};
+    const v = {name, tax:get('tax').replace(/\s/g,''), bank:(bankByName(get('bank')) || {name:get('bank')}).name, acc:get('acc').replace(/\s/g,'').toUpperCase(), accName:bankText(get('accName'))};
     const id = get('id');
     const existing = id ? S.vendors.find(x => x.id === id && !x.deleted) : S.vendors.find(x => !x.deleted && x.acc === v.acc && x.bank.toLowerCase() === v.bank.toLowerCase());
     if (id && !existing) { out.push({line, name, action:'error', msg:`Mã NCC ${id} không có trong danh bạ`}); continue; }
@@ -1832,7 +1845,7 @@ document.addEventListener('submit', e => {
 });
 
 /* ===================== Người dùng ===================== */
-function permText(u){ const p = []; if (u.acct) p.push('Kế toán'); if (u.signer) p.push('Duyệt đợt chi'); if (u.admin) p.push('Quản trị'); if (u.dash) p.push('Dashboard'); return p.join(', '); }
+function permText(u){ const p = []; if (u.acct) p.push('Kế toán'); if (u.signer) p.push('Duyệt đợt chi'); if (u.admin) p.push('Quản trị'); if (u.dash) p.push('Dashboard'); if (u.cfg) p.push('Cấu hình'); if (u.master) p.push('Master Data'); return p.join(', '); }
 function configSlots(id){
   const C = S.config; const out = [];
   C.rules.forEach(rl => { const by = {}; sortedBands(rl).forEach((b,i) => b.levels.forEach((l,li) => { if (l.approvers.includes(id)) (by[li+1] = by[li+1] || []).push(i+1); }));
@@ -1841,9 +1854,10 @@ function configSlots(id){
   if (C.batch) sortedBands(C.batch).forEach((b,i) => b.levels.forEach((l,li) => { if (l.approvers.includes(id)) out.push(`Đợt chi: cấp ${li+1}, mốc ${i+1}`); }));
   return out;
 }
-function viewUsers(){
+function viewUsers(inner){
   const list = S.users.filter(u => !u.deleted);
-  return `${head('Quản trị','Người dùng', `${list.filter(u=>u.active).length} người đang hoạt động. Quyền duyệt đề xuất chọn theo từng bước ở Cấu hình phê duyệt.`, `<button class="btn pri" data-unew="1">${icon('plus',16)} Thêm người dùng</button>`)}
+  return `${inner ? '' : head('Quản trị','Người dùng', `${list.filter(u=>u.active).length} người đang hoạt động. Quyền duyệt đề xuất chọn theo từng bước ở Cấu hình phê duyệt.`, `<button class="btn pri" data-unew="1">${icon('plus',16)} Thêm người dùng</button>`)}
+  ${inner ? '<div class="row" style="justify-content:flex-end;margin-bottom:12px"><button class="btn pri" data-unew="1">${icon(\'plus\',16)} Thêm người dùng</button></div>' : ''}
   <div class="tw"><table>
     <thead><tr><th>Người dùng</th><th>Phòng</th><th>Quyền</th><th>Trong luồng duyệt</th><th>Trạng thái</th><th></th></tr></thead>
     <tbody>${list.map(u => { const sl = configSlots(u.id); return `<tr>
@@ -1871,7 +1885,9 @@ function userModal(id){
       <div><span class="flabel">Phân quyền</span>
         <div class="checks">${perm('acct','Kế toán','Lập đợt chi, xem thông tin chuyển khoản, đánh dấu đã chuyển và đính kèm UNC.')}
         ${perm('signer','Duyệt đợt chi','Duyệt đợt chi trước khi kế toán chuyển tiền.')}
-        ${perm('admin','Quản trị','Quản lý người dùng và cấu hình phê duyệt.')}
+        ${perm('admin','Quản trị','Toàn quyền: mọi tab, quản lý người dùng.')}
+        ${perm('cfg','Cấu hình','Xem và sửa Đề xuất chi, Đợt chi. Tab Người dùng chỉ Quản trị.')}
+        ${perm('master','Master Data','Xem và sửa NCC, danh sách ngân hàng, hạng mục. Kế toán mặc định có quyền này.')}
         ${perm('dash','Dashboard quản trị','Xem dashboard quản trị: dòng tiền, chi theo phòng và hạng mục, rủi ro. Quản trị luôn xem được.')}
         ${id ? perm('active','Đang hoạt động','Bỏ chọn để tạm khoá: người này không đăng nhập và không nhận việc duyệt.') : ''}</div>
         <p class="small faint" style="margin:6px 0 0">Ai cũng tạo được đề xuất chi. Người duyệt đề xuất được chọn theo từng bước ở Cấu hình phê duyệt.</p></div>
@@ -1882,7 +1898,7 @@ function userModal(id){
 }
 function saveUserForm(f){
   const fd = new FormData(f); const id = UI.uedit;
-  const v = {name:(fd.get('name')||'').trim(), title:(fd.get('title')||'').trim(), email:(fd.get('email')||'').trim().toLowerCase(), dept:fd.get('dept'), acct:!!fd.get('acct'), signer:!!fd.get('signer'), admin:!!fd.get('admin'), dash:!!fd.get('dash'), active: id ? !!fd.get('active') : true};
+  const v = {name:(fd.get('name')||'').trim(), title:(fd.get('title')||'').trim(), email:(fd.get('email')||'').trim().toLowerCase(), dept:fd.get('dept'), acct:!!fd.get('acct'), signer:!!fd.get('signer'), admin:!!fd.get('admin'), dash:!!fd.get('dash'), cfg:!!fd.get('cfg'), master:!!fd.get('master'), active: id ? !!fd.get('active') : true};
   const errs = [];
   if (v.name.length < 2) errs.push('Nhập họ và tên.');
   if (!v.title) errs.push('Nhập chức danh.');
@@ -2027,7 +2043,7 @@ function vendorModal(id, o){
     <div class="modal-b"><div class="fgrid">
       <label class="f full">Tên nhà cung cấp<input class="in" name="name" autocomplete="off" value="${esc(v.name)}"></label>
       <label class="f">Mã số thuế<input class="in" name="tax" autocomplete="off" inputmode="numeric" value="${esc(v.tax || '')}"></label>
-      <label class="f">Ngân hàng<input class="in" name="bank" autocomplete="off" placeholder="VD: Vietcombank" value="${esc(v.bank || '')}"></label>
+      <label class="f">Ngân hàng${bankSelect(v.bank)}<span class="hint" data-bankcode>${esc(bankCodeText(v.bank))}</span></label>
       <label class="f">Số tài khoản<input class="in" name="acc" autocomplete="off" data-acc value="${esc(v.acc || '')}"><span class="hint">Số và chữ, không dấu cách.</span></label>
       <label class="f">Tên tài khoản<input class="in" name="accName" autocomplete="off" placeholder="IN HOA KHONG DAU" data-upper value="${esc(v.accName || '')}"></label>
     </div><div id="mErr" style="margin-top:12px"></div></div>
@@ -2059,6 +2075,7 @@ function invModal(id){
     <div class="modal-b"><div class="fgrid">
       <label class="f">Số hoá đơn<input class="in" name="inv" autocomplete="off" placeholder="Nhiều số cách nhau dấu phẩy"></label>
       <label class="f">Tiền thuế trên hoá đơn<div class="money"><input class="in" name="tax" inputmode="numeric" data-money value="${fmt(linesSum(r.lines,'tax'))}" autocomplete="off"><span>đ</span></div><span class="hint">Sửa nếu lệch với ĐNTT.</span></label>
+      <label class="f">Ngày hoá đơn<input class="in" type="date" name="invDate" value="${esc(r.invDate||'')}"></label>
       <label class="f full">File hoá đơn (PDF, XML)<input class="in" type="file" name="files" multiple style="padding:6px 10px;height:auto"></label>
     </div><div id="mErr" style="margin-top:12px"></div></div>
     <div class="modal-f"><button type="button" class="btn sec" data-close="1">Huỷ</button><button type="submit" class="btn pri">Lưu hoá đơn</button></div></form>`, 520);
@@ -2149,8 +2166,10 @@ function summaryData(){
     ]};
 }
 function viewReports(){
-  const tab = UI.rtab || 'history'; const f = UI.rflt;
-  const tabs = `<div class="tabs" role="tablist"><button role="tab" class="${tab==='history'?'on':''}" data-rtab="history">Lịch sử thao tác</button><button role="tab" class="${tab==='summary'?'on':''}" data-rtab="summary">Báo cáo tổng hợp</button></div>`;
+  const tab = UI.rtab || (canDash(me()) ? 'dash' : 'summary'); UI.rtab = tab; const f = UI.rflt;
+  const tb = (v, t) => `<button role="tab" class="${tab===v?'on':''}" data-rtab="${v}">${t}</button>`;
+  const tabs = `<div class="tabs" role="tablist">${canDash(me()) ? tb('dash','Dashboard') : ''}${tb('summary','Báo cáo tổng hợp')}${tb('history','Lịch sử thao tác')}</div>`;
+  if (tab === 'dash' && canDash(me())) return viewDash(tabs);
   if (tab === 'history') {
     const rows = historyRows(); const show = rows.slice(0,300);
     return `${head('Theo dõi','Lịch sử và báo cáo','Mọi thao tác lập, duyệt, huỷ, chi trên phiếu và đợt chi ở một chỗ. Tìm chung, lọc theo ngày, xuất Excel.')}${tabs}
@@ -2219,17 +2238,19 @@ document.addEventListener('click', e => {
   if (d.xbank) { const b = batch(d.xbank); const ck = transferIds(b);
     exportXlsx(`${b.code}_import_ngan_hang.xlsx`, [
       {name:'CHUYEN KHOAN', rows:[BANK_HEAD].concat(ck.map((id,i) => { const row = bankRow(b, id, i); return row; }))},
+      {name:'Booking', rows: bookingRowsFor(b.reqIds)},
+      {name:'Tong hop', rows: invSummaryRows(b.reqIds)},
       {name:'TAT CA KHOAN', rows:[['STT','MA PHIEU','NGUOI THU HUONG','HINH THUC','SO TIEN','TRANG THAI','NGAY CHI','TEN FILE UNC','UNC DA DINH KEM']].concat(b.reqIds.map((id,i) => { const r = req(id), ln = b.lines[id]; return [i+1, r.code, payeeOf(r).accName, bankText(PAYM[pmOf(r)]), r.amount, ln.paidAt ? 'DA CHI' : 'CHUA CHI', ln.paidAt ? dt(ln.paidAt) : '', uncName(b,id), ln.unc.join(', ')]; }))}
     ]); return; }
   if (d.zunc) { const b = batch(d.zunc); const items = [];
     b.reqIds.forEach(id => { const ln = b.lines[id]; if (!ln.paidAt) return; ln.unc.forEach((n,k) => { const base = uncName(b,id); const ext = (fname(n).match(/\.[a-z0-9]+$/i) || ['.pdf'])[0]; items.push({name: base.replace(/\.pdf$/, (k ? '_' + (k+1) : '') + ext), key: n}); }); });
     zipKeys(`UNC_${b.code}.zip`, items); return; }
   if (d.selck) { const b = batch(d.selck); const ck = b.reqIds.filter(id => !b.lines[id].paidAt && pmOf(req(id)) === 'transfer'); const all = ck.every(id => UI.paySel[id]); ck.forEach(id => UI.paySel[id] = !all); renderMain(); return; }
-  if (a === 'xlist') { exportXlsx(`De_xuat_chi_${localDate()}.xlsx`, [{name:'De xuat chi', rows:reqExportRows(UI.listShown || [])}]); return; }
+  if (a === 'xlist') { const ids = UI.listShown || []; exportXlsx(`De_xuat_chi_${localDate()}.xlsx`, [{name:'De xuat chi', rows:reqExportRows(ids)}, {name:'Tong hop', rows:invSummaryRows(ids)}, {name:'Booking', rows:bookingRowsFor(ids)}]); return; }
   if (a === 'zuncs') { const items = []; (UI.listShown || []).forEach(id => { const r = req(id); (r.unc || []).forEach((n,k) => items.push({name: `${r.code}_${k ? (k+1) + '_' : ''}${fname(n)}`, key: n})); }); zipKeys(`UNC_de_xuat_${localDate()}.zip`, items); return; }
   if (a === 'xbatches') { const bs = S.batches.filter(b => inRange(b.createdAt, UI.bflt));
     exportXlsx(`Dot_chi_${localDate()}.xlsx`, [{name:'Dot chi', rows:[['STT','Mã đợt','Ngày giờ lập','Người lập','Hẹn thanh toán','Số khoản','Tổng tiền','Trạng thái','Người duyệt','Duyệt thay','Ngày duyệt','Ngày chi xong']].concat(bs.map((b,i) => [i+1, b.code, dt(b.createdAt), user(b.createdBy).name, dOnly(b.payDate+'T00:00'), b.reqIds.length, batchTotal(b), BSTATUS[b.status][0], b.approvedBy ? user(b.approvedBy).name : '', b.approvedFor ? user(b.approvedFor).name : '', b.approvedAt ? dt(b.approvedAt) : '', b.paidAt ? dt(b.paidAt) : '']))},
-      {name:'Chi tiet khoan', rows:[['Mã đợt','STT','Mã phiếu','Nội dung','Người thụ hưởng','Hình thức','Số tiền','Ngày chi','UNC']].concat(bs.flatMap(b => b.reqIds.map((id,i) => { const r = req(id), ln = b.lines[id]; return [b.code, i+1, r.code, r.title, payeeOf(r).name, PAYM[pmOf(r)], r.amount, ln.paidAt ? dt(ln.paidAt) : '', ln.unc.join(', ')]; })))}]); return; }
+      {name:'Booking', rows: bookingRowsFor(bs.flatMap(x => x.reqIds))}, {name:'Chi tiet khoan', rows:[['Mã đợt','STT','Mã phiếu','Nội dung','Người thụ hưởng','Hình thức','Số tiền','Ngày chi','UNC']].concat(bs.flatMap(b => b.reqIds.map((id,i) => { const r = req(id), ln = b.lines[id]; return [b.code, i+1, r.code, r.title, payeeOf(r).name, PAYM[pmOf(r)], r.amount, ln.paidAt ? dt(ln.paidAt) : '', ln.unc.join(', ')]; })))}]); return; }
   if (a === 'xhistory') { exportXlsx(`Lich_su_thao_tac_${localDate()}.xlsx`, [{name:'Lich su', rows:[['STT','Thời gian','Mã','Người thực hiện','Thao tác','Phiếu, đợt','Số tiền']].concat(historyRows().map((x,i) => [i+1, dt(x.at), x.code, x.by ? user(x.by).name : 'Hệ thống', x.text, x.what, x.amt]))}]); return; }
   if (a === 'xsummary') { const d2 = summaryData(); const k = d2.kpi;
     exportXlsx(`Bao_cao_tong_hop_${localDate()}.xlsx`, [{name:'Tong quan', rows:[['Chỉ tiêu','Giá trị'],['Từ ngày', UI.rflt.from || 'Tất cả'],['Đến ngày', UI.rflt.to || 'Tất cả'],['Lệnh đã lập', k.made],['Đã duyệt xong', k.approved],['Đã chi (số lệnh)', k.paidN],['Đã chi (số tiền)', k.paidAmt],['Trong đó thuế', k.tax],['Từ chối, huỷ', k.closed],['Chờ hoá đơn', k.invWait],['Thời gian duyệt trung bình (giờ)', k.avgH == null ? '' : Math.round(k.avgH*10)/10]]}]
@@ -2273,8 +2294,22 @@ document.addEventListener('submit', async e => {
     if (!r) return; if (!v || v < localDate()) return mErr('Chọn hạn quyết toán, không được ở quá khứ.');
     const old = r.settleDue; r.settleDue = new Date(v + 'T23:59:59').getTime();
     log(r, S.me, `Đổi hạn quyết toán tạm ứng: ${dOnly(old)} → ${dOnly(r.settleDue)}`); save(); closeModal(); toast('Đã đổi hạn quyết toán'); renderMain(); return; }
-  if (f.id === 'bankForm') { const v = {bank: g('bank'), acc: g('acc').replace(/\s/g,''), accName: bankText(g('accName'))};
-    if (v.bank.length < 2) return mErr('Nhập tên ngân hàng.');
+  if (f.id === 'bankAddForm') { const code = g('code').toUpperCase().replace(/\s/g,''), name = g('name');
+    const err = bankAddEdit(code, name, null); if (err) { toast(err); return; }
+    S.banks.push({id:'bk'+code, code, name}); save(); toast(`Đã thêm ${name}`); renderMain(); return; }
+  if (f.id === 'bankEditForm') { const bk = (S.banks || []).find(b => b.id === UI.bankEditFor); if (!bk) return;
+    const code = g('code').toUpperCase().replace(/\s/g,''), name = g('name');
+    const err = bankAddEdit(code, name, bk.id); if (err) return mErr(err);
+    const old = bk.name;
+    bk.code = code; bk.name = name;
+    if (old !== name) {
+      S.vendors.forEach(v => { if (v.bank === old) v.bank = name; });
+      Object.values(S.userBanks || {}).forEach(b => { if (b && b.bank === old) b.bank = name; });
+      S.reqs.forEach(r => { if (r.payee && r.payee.bank === old) r.payee.bank = name; });
+    }
+    save(); closeModal(); toast(`Đã lưu ${name}`); renderMain(); return; }
+  if (f.id === 'bankForm') { const v = {bank: (bankByName(g('bank')) || {name:''}).name, acc: g('acc').replace(/\s/g,''), accName: bankText(g('accName'))};
+    if (!v.bank) return mErr('Chọn ngân hàng trong danh sách Master Data.');
     if (!/^\d{6,20}$/.test(v.acc)) return mErr('Số tài khoản chỉ gồm số, từ 6 đến 20 chữ số.');
     if (v.accName.length < 3) return mErr('Nhập tên chủ tài khoản.');
     S.userBanks = S.userBanks || {}; S.userBanks[S.me] = Object.assign(v, {updatedAt: now()});
@@ -2298,7 +2333,7 @@ document.addEventListener('submit', async e => {
   if (f.id === 'reasonForm') { const reason = g('reason'); if (reason.length < 5) { $('#reasonErr').textContent = 'Ghi lý do, tối thiểu 5 ký tự.'; return; }
     const fn = reasonFn; reasonFn = null; closeModal(); if (fn) fn(reason); save(); if (UI.view === 'batch' && batch(UI.id) && batch(UI.id).status === 'cancelled' && !batch(UI.id).reqIds.length) go('batches'); else render(); return; }
   if (f.id === 'vendorForm') { const ctx = UI.vctx || {id:null, ctx:'form'};
-    const v = {name:g('name'), tax:g('tax'), bank:g('bank'), acc:g('acc'), accName:bankText(g('accName'))};
+    const v = {name:g('name'), tax:g('tax'), bank:(bankByName(g('bank')) || {name:''}).name, acc:g('acc'), accName:bankText(g('accName'))};
     if (v.name.length < 3 || !v.bank || !v.acc || !v.accName) return mErr('Nhập đủ tên NCC, ngân hàng, số tài khoản và tên tài khoản.');
     if (!/^[0-9A-Z]{4,24}$/.test(v.acc)) return mErr('Số tài khoản gồm 4 đến 24 ký tự số hoặc chữ.');
     if (v.tax && !/^\d{10}(-?\d{3})?$/.test(v.tax)) return mErr('Mã số thuế gồm 10 số, hoặc 10 số kèm 3 số chi nhánh.');
@@ -2328,7 +2363,7 @@ document.addEventListener('submit', async e => {
     const tax = digits(g('tax')); const nos = inv.split(',').map(x => x.trim()).filter(Boolean);
     r.lines.forEach((l,i) => { if (!l.inv) l.inv = nos[Math.min(i, nos.length-1)]; });
     const cur = linesSum(r.lines,'tax'); if (tax !== cur && r.lines.length) { const l = r.lines[r.lines.length-1]; l.tax += tax - cur; l.pre = l.total - l.tax; }
-    names.forEach(n => r.files.push({name:n, kind:'vat'})); r.invDone = {at:now(), by:S.me, inv:nos, files:names};
+    names.forEach(n => r.files.push({name:n, kind:'vat'})); r.invDone = {at:now(), by:S.me, inv:nos, files:names}; if (g('invDate')) r.invDate = g('invDate');
     log(r, S.me, `Bổ sung hoá đơn ${nos.join(', ')}${tax !== cur ? `, chỉnh tiền thuế ${fmt(cur)} → ${fmt(tax)} đ` : ''}`); save(); closeModal(); toast('Đã bổ sung hoá đơn'); render(); return; }
   if (f.id === 'pasteForm') { const ls = parsePaste(fd.get('text') || ''); if (!ls.length) return mErr('Không đọc được dòng nào. Kiểm tra thứ tự cột và dấu tab giữa các cột.');
     const fm = UI.form; if (fm.lines.every(l => !l.total && !l.inv)) fm.lines = []; fm.lines = fm.lines.concat(ls); if (!fm.amountManual) fm.amount = linesSum(fm.lines,'total');
@@ -2347,9 +2382,9 @@ const $root = () => document.getElementById('main');
 /* Trạng thái mới cho công ty: chỉ có cấu trúc mặc định, không có người dùng, NCC hay phiếu mẫu. */
 function freshState(){
   return {
-    me: null, guideDone: {},
+    me: null, guideDone: {}, fileNames: {},
     depts: [{id:'OPS',name:'Vận hành'},{id:'SAL',name:'Kinh doanh'},{id:'FIN',name:'Tài chính – Kế toán'},{id:'TEC',name:'Công nghệ'},{id:'BOD',name:'Ban điều hành'}],
-    users: [], vendors: [], cats: JSON.parse(JSON.stringify(CATS0)), userBanks: {},
+    users: [], vendors: [], banks: JSON.parse(JSON.stringify(BANK0)), cats: JSON.parse(JSON.stringify(CATS0)), userBanks: {},
     config: {
       version: 1, updatedAt: now(), updatedBy: null,
       rules: [{id:'rDEF', def:true, depts:[], people:[], bands:[
@@ -2362,7 +2397,7 @@ function freshState(){
   };
 }
 function normalizeState(x){
-  x.guideDone = x.guideDone || {}; x.fileNames = x.fileNames || {}; x.users = x.users || []; x.vendors = x.vendors || []; x.reqs = x.reqs || [];
+  x.guideDone = x.guideDone || {}; x.fileNames = x.fileNames || {}; x.banks = x.banks || JSON.parse(JSON.stringify(BANK0)); x.users = x.users || []; x.vendors = x.vendors || []; x.reqs = x.reqs || [];
   x.batches = x.batches || []; x.delegations = x.delegations || []; x.userBanks = x.userBanks || {}; x.seq = x.seq || {A:0, PB:0};
   x.config.batch = x.config.batch || {bands:[{id:'bB1', max:null, levels:[{approvers:[], mode:'any'}]}]};
   x.config.fallback = x.config.fallback || []; x.config.noInvoice = x.config.noInvoice || {on:true, approvers:[]};
@@ -2521,14 +2556,14 @@ function dashData(){
 function dashCard(title, big, note, tone){
   return `<div class="card" style="padding:16px 18px"><p class="eyebrow" style="margin:0 0 6px">${title}</p><div style="font-size:20px;font-weight:600;${tone === 'bad' ? 'color:var(--critical)' : ''}">${big}</div>${note ? `<p class="small muted" style="margin:6px 0 0">${note}</p>` : ''}</div>`;
 }
-function viewDash(){
+function viewDash(tabsHtml=''){
   const D = UI.dash = UI.dash || {period:'week', dept:''};
   const k = dashData();
   const share = v => (v * 100).toFixed(1) + '%';
   const bar = (v, c) => `<div style="height:6px;background:var(--line,#eee);border-radius:3px;overflow:hidden"><i style="display:block;height:100%;width:${Math.min(100, v*100).toFixed(1)}%;background:${c||'var(--accent,#0f766e)'}"></i></div>`;
   const tabBtn = (v, t) => `<button role="tab" aria-selected="${D.period===v}" class="${D.period===v?'on':''}" data-dperiod="${v}">${t}</button>`;
-  return `${head('Quản trị', 'Dashboard quản trị', `Dòng tiền, phân bổ chi phí và rủi ro, ${k.label}. Chỉ người được phân quyền xem.`,
-    `<div class="row"><div class="tabs" role="tablist" style="margin:0">${tabBtn('week','Tuần')}${tabBtn('month','Tháng')}</div><button class="btn sec sm" data-dexport="1">${icon('download',14)} Xuất Excel</button></div>`)}
+  return `${head('Báo cáo', 'Dashboard quản trị', `Dòng tiền, phân bổ chi phí và rủi ro, ${k.label}. Chỉ người được phân quyền xem.`,
+    `<div class="row"><div class="tabs" role="tablist" style="margin:0">${tabBtn('week','Tuần')}${tabBtn('month','Tháng')}</div><button class="btn sec sm" data-dexport="1">${icon('download',14)} Xuất Excel</button></div>`)}${tabsHtml}
   <div class="card" style="padding:12px 16px;margin-bottom:16px"><div class="row"><span class="small faint">Phòng chịu chi phí</span><select class="in" data-ddept style="max-width:240px"><option value="">Tất cả phòng</option>${S.depts.map(d => `<option value="${d.id}" ${D.dept===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}</select></div></div>
 
   <p class="eyebrow" style="margin:0 0 8px">Dòng tiền</p>
@@ -2583,6 +2618,102 @@ document.addEventListener('click', e => {
 document.addEventListener('change', e => {
   if (e.target.dataset.ddept != null) { UI.dash = Object.assign({period:'week', dept:''}, UI.dash, {dept: e.target.value}); renderMain(); }
 });
+
+/* ===================== Master Data: NCC, ngân hàng, hạng mục ===================== */
+const bankList = () => (S.banks || []).slice().sort((a,b) => a.name.localeCompare(b.name, 'vi'));
+const normBank = s => noAccent(String(s || '')).toLowerCase().replace(/\s+/g, ' ').trim();
+const bankByName = v => { const k = normBank(v); return k ? (S.banks || []).find(b => normBank(b.name) === k || normBank(b.code) === k) || null : null; };
+const bankCodeText = name => { const b = bankByName(name); return b ? `Mã ngân hàng: ${b.code}` : (name ? 'Chưa có trong danh sách, chọn lại' : 'Chọn ngân hàng từ danh sách'); };
+function bankSelect(current){
+  const cur = bankByName(current);
+  return `<select class="in" name="bank" aria-label="Ngân hàng"><option value="">— Chọn ngân hàng —</option>${bankList().map(b => `<option value="${esc(b.name)}" ${cur && cur.id === b.id ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}</select>`;
+}
+function viewMaster(){
+  if (!UI.masterTab) UI.masterTab = 'vendors';
+  const tabs = [['vendors','NCC / người nhận'],['banks','Danh sách ngân hàng'],['cats','Hạng mục chi phí']];
+  const tab = tabs.some(t => t[0] === UI.masterTab) ? UI.masterTab : 'vendors'; UI.masterTab = tab;
+  const body = tab === 'vendors' ? vendorsDirHtml() : tab === 'banks' ? bankMasterHtml() : cfgCats();
+  return `${head('Master Data','Master Data','NCC, ngân hàng và hạng mục dùng chung cho đề xuất, đợt chi và tài khoản cá nhân. Thay đổi có hiệu lực ngay, không cần lưu.')}
+  <div class="tabs" role="tablist">${tabs.map(t => `<button role="tab" aria-selected="${tab===t[0]}" class="${tab===t[0]?'on':''}" data-mtab="${t[0]}">${t[1]}</button>`).join('')}</div>
+  <div class="stack">${body}</div>`;
+}
+function bankUsage(bk){
+  return S.vendors.filter(v => !v.deleted && v.bank === bk.name).length + Object.values(S.userBanks || {}).filter(b => b && b.bank === bk.name).length;
+}
+function bankMasterHtml(){
+  const list = bankList();
+  return `<div class="card" style="padding:16px 18px">
+    <div class="tw"><table><thead><tr><th style="width:130px">Mã</th><th>Tên ngân hàng</th><th class="r">Đang dùng</th><th></th></tr></thead><tbody>
+    ${list.map(bk => `<tr><td class="code">${esc(bk.code)}</td><td>${esc(bk.name)}</td><td class="r">${bankUsage(bk)}</td><td class="act"><button class="btn ghost sm" data-bkedit="${bk.id}">Sửa</button><button class="btn ghost sm" data-bkdel="${bk.id}" style="color:var(--critical)">Xoá</button></td></tr>`).join('')}
+    </tbody></table></div>
+    <form class="row" id="bankAddForm" style="margin-top:14px;gap:8px"><input class="in" name="code" placeholder="Mã, VD: VCB" autocomplete="off" aria-label="Mã ngân hàng" style="width:150px;height:34px"><input class="in" name="name" placeholder="Tên ngân hàng" autocomplete="off" aria-label="Tên ngân hàng" style="flex:1;max-width:340px;height:34px"><button class="btn sec sm" type="submit">${icon('plus',14)} Thêm ngân hàng</button></form>
+    <p class="small faint" style="margin:10px 0 0">Chỉ chọn được ngân hàng có trong danh sách này. Đổi tên sẽ đổi trên toàn bộ NCC và tài khoản đang dùng. Ngân hàng đang được dùng không xoá được.</p></div>`;
+}
+function bankEditModal(id){
+  const bk = (S.banks || []).find(b => b.id === id); if (!bk) return; UI.bankEditFor = id;
+  modal(`<form class="modal" id="bankEditForm" role="dialog" aria-modal="true" aria-labelledby="bekh" novalidate>
+    <div class="modal-h"><h3 id="bekh">Sửa ngân hàng</h3><p>Đổi tên sẽ đổi trên toàn bộ NCC và tài khoản cá nhân đang dùng tên cũ.</p></div>
+    <div class="modal-b"><div class="fgrid">
+      <label class="f">Mã<input class="in" name="code" value="${esc(bk.code)}" autocomplete="off"></label>
+      <label class="f full">Tên ngân hàng<input class="in" name="name" value="${esc(bk.name)}" autocomplete="off"></label>
+    </div><div id="mErr" style="margin-top:12px"></div></div>
+    <div class="modal-f"><button type="button" class="btn sec" data-close="1">Huỷ</button><button type="submit" class="btn pri">Lưu</button></div></form>`, 460);
+}
+function bankAddEdit(code, name, id){
+  if (!/^[A-Z0-9]{2,8}$/.test(code)) return 'Mã gồm 2 đến 8 chữ hoặc số, không dấu.';
+  if (name.length < 2) return 'Nhập tên ngân hàng.';
+  const taken = (S.banks || []).some(b => b.id !== id && (normBank(b.name) === normBank(name) || b.code === code));
+  if (taken) return 'Mã hoặc tên này đã có trong danh sách.';
+  return null;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return; const d = b.dataset;
+  if (d.mtab) { UI.masterTab = d.mtab; renderMain(); return; }
+  if (d.bkedit) { bankEditModal(d.bkedit); return; }
+  if (d.bkdel) {
+    const bk = (S.banks || []).find(x => x.id === d.bkdel); if (!bk) return;
+    const n = bankUsage(bk);
+    if (n) { toast(`Không xoá được ${bk.name}: đang dùng ở ${n} NCC hoặc tài khoản cá nhân.`); return; }
+    askConfirm(`Xoá ${bk.name}?`, 'Ngân hàng sẽ không còn trong danh sách chọn.', 'Xoá ngân hàng', () => { S.banks = S.banks.filter(x => x.id !== bk.id); save(); toast(`Đã xoá ${bk.name}`); renderMain(); });
+    return;
+  }
+});
+document.addEventListener('change', e => {
+  if (e.target.name !== 'bank') return;
+  const hint = e.target.closest('form') && e.target.closest('form').querySelector('[data-bankcode]');
+  if (hint) hint.textContent = bankCodeText(e.target.value);
+});
+
+/* ===================== Xuất dữ liệu theo file mẫu đối soát (cột trùng tiêu đề mẫu, cột không có dữ liệu thì bỏ) ===================== */
+const dtFull = t => { if (!t) return ''; const d = new Date(t); return `${p2(d.getDate())}/${p2(d.getMonth()+1)}/${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
+const ddmmyyyy = s => s ? String(s).split('-').reverse().join('/') : '';
+const hasInv = r => r.evidence === 'vat' || r.evidence === 'sale' || !!r.invDone;
+function bookingRowsFor(ids){
+  const rs = ids.map(id => req(id)).filter(Boolean);
+  const bk = r => r.booking || {};
+  const cols = [
+    ['Mã đề xuất', r => r.code || ''], ['Khách sạn', r => bk(r).hotel || ''], ['Mã booking', r => bk(r).code || ''], ['Khách', r => bk(r).guest || ''],
+    ['Check-in', r => ddmmyyyy(bk(r).checkin)], ['Check-out', r => ddmmyyyy(bk(r).checkout)], ['Số tiền', r => r.amount],
+    ['Trạng thái chi', r => STATUS[r.status][0]], ['Ngày chi', r => dtFull(r.paidAt)], ['Ngày tạo phiếu', r => dtFull(r.createdAt)],
+    ['Hình thức', r => PAYM[pmOf(r)]], ['Nội dung CK', r => memoOf(r)], ['Người tạo', r => user(r.requester).name],
+    ['Có hoá đơn?', r => hasInv(r) ? 'Có' : 'Chưa'], ['SỐ HÓA ĐƠN ', r => invNos(r).join(', ')], ['NGÀY HÓA ĐƠN ', r => ddmmyyyy(r.invDate)],
+    ['TÊN NHÀ CUNG CẤP', r => payeeOf(r).name], ['MÃ SỐ THUẾ NHÀ CUNG CẤP', r => (r.payee && r.payee.type === 'vendor' && (vendor(r.payee.vendorId) || {}).tax) || payeeOf(r).tax || ''], ['SỐ TIỀN THANH TOÁN', r => r.amount],
+    ['Số file HĐ', r => (r.files || []).length], ['Tên file hoá đơn', r => (r.files || []).map(x => fname(x.name)).join('; ')],
+  ];
+  const cells = cols.map(([h, fn]) => [h, rs.map(fn)]);
+  const keep = cells.filter(([h, vals]) => vals.some(v => v !== '' && v !== null && v !== undefined));
+  if (!rs.length || !keep.length) return [['Không có dữ liệu']];
+  const out = [keep.map(c => c[0])];
+  rs.forEach((r, i) => out.push(keep.map(c => c[1][i])));
+  return out;
+}
+function invSummaryRows(ids){
+  const rs = ids.map(id => req(id)).filter(Boolean);
+  const y = rs.filter(hasInv), n = rs.filter(r => !hasInv(r));
+  const sum = a => a.reduce((x, r) => x + r.amount, 0);
+  return [['Tổng hợp hoá đơn', `Tháng ${localDate().slice(0,7)}`], [], ['Chỉ tiêu', 'Số booking', 'Tổng tiền (đ)'],
+    ['Đã có hoá đơn', y.length, sum(y)], ['Chưa có hoá đơn', n.length, sum(n)], ['TỔNG', rs.length, sum(rs)]];
+}
 
 /* Khởi động sau khi mọi khối đã khai báo. */
 boot();
