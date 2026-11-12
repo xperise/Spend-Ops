@@ -524,6 +524,7 @@ function renderSide(){
     ...(seesBatches(u) ? [['batches','wallet','Đợt chi',bcount]] : []),
     ['delegate','swap','Ủy quyền duyệt',0],
     ['reports','chart','Lịch sử, báo cáo',0],
+    ...(canDash(u) ? [['dash','chart','Dashboard quản trị',0]] : []),
     ...(u.admin ? [['users','users','Người dùng',0]] : []), ...((u.admin || u.acct) ? [['config','gear','Cấu hình',0]] : [])
   ];
   const active = ({new:'list', edit:'list', detail:'list', batch:'batches'})[UI.view] || UI.view;
@@ -537,7 +538,7 @@ function renderSide(){
 }
 function renderMain(){
   const v = UI.view; const m = $('#main');
-  const views = {home:viewHome, list:viewList, inbox:viewInbox, new:viewForm, edit:viewForm, detail:viewDetail, batches:viewBatches, batch:viewBatch, delegate:viewDelegate, reports:viewReports, users:() => me().admin ? viewUsers() : `<div class="card empty"><b>Chỉ Quản trị quản lý người dùng</b></div>`, config:() => (me().admin || me().acct) ? viewConfig() : `<div class="card empty"><b>Chỉ Quản trị và Kế toán mở được cấu hình</b>Đổi vai sang Quản trị hệ thống ở góc trái.</div>`};
+  const views = {home:viewHome, list:viewList, inbox:viewInbox, new:viewForm, edit:viewForm, detail:viewDetail, batches:viewBatches, batch:viewBatch, delegate:viewDelegate, reports:viewReports, dash:() => canDash(me()) ? viewDash() : `<div class="card empty"><b>Chỉ người được phân quyền mới xem được dashboard</b>Nhờ quản trị bật quyền “Dashboard quản trị” cho bạn.</div>`, users:() => me().admin ? viewUsers() : `<div class="card empty"><b>Chỉ Quản trị quản lý người dùng</b></div>`, config:() => (me().admin || me().acct) ? viewConfig() : `<div class="card empty"><b>Chỉ Quản trị và Kế toán mở được cấu hình</b>Đổi vai sang Quản trị hệ thống ở góc trái.</div>`};
   m.innerHTML = (views[v] || viewHome)();
   if (v === 'new' || v === 'edit') updatePreview();
   if (v === 'config') updateSim();
@@ -1757,7 +1758,7 @@ document.addEventListener('submit', e => {
 });
 
 /* ===================== Người dùng ===================== */
-function permText(u){ const p = []; if (u.acct) p.push('Kế toán'); if (u.signer) p.push('Duyệt đợt chi'); if (u.admin) p.push('Quản trị'); return p.join(', '); }
+function permText(u){ const p = []; if (u.acct) p.push('Kế toán'); if (u.signer) p.push('Duyệt đợt chi'); if (u.admin) p.push('Quản trị'); if (u.dash) p.push('Dashboard'); return p.join(', '); }
 function configSlots(id){
   const C = S.config; const out = [];
   C.rules.forEach(rl => { const by = {}; sortedBands(rl).forEach((b,i) => b.levels.forEach((l,li) => { if (l.approvers.includes(id)) (by[li+1] = by[li+1] || []).push(i+1); }));
@@ -1797,6 +1798,7 @@ function userModal(id){
         <div class="checks">${perm('acct','Kế toán','Lập đợt chi, xem thông tin chuyển khoản, đánh dấu đã chuyển và đính kèm UNC.')}
         ${perm('signer','Duyệt đợt chi','Duyệt đợt chi trước khi kế toán chuyển tiền.')}
         ${perm('admin','Quản trị','Quản lý người dùng và cấu hình phê duyệt.')}
+        ${perm('dash','Dashboard quản trị','Xem dashboard quản trị: dòng tiền, chi theo phòng và hạng mục, rủi ro. Quản trị luôn xem được.')}
         ${id ? perm('active','Đang hoạt động','Bỏ chọn để tạm khoá: người này không đăng nhập và không nhận việc duyệt.') : ''}</div>
         <p class="small faint" style="margin:6px 0 0">Ai cũng tạo được đề xuất chi. Người duyệt đề xuất được chọn theo từng bước ở Cấu hình phê duyệt.</p></div>
       <div id="uErr"></div>
@@ -1806,7 +1808,7 @@ function userModal(id){
 }
 function saveUserForm(f){
   const fd = new FormData(f); const id = UI.uedit;
-  const v = {name:(fd.get('name')||'').trim(), title:(fd.get('title')||'').trim(), email:(fd.get('email')||'').trim().toLowerCase(), dept:fd.get('dept'), acct:!!fd.get('acct'), signer:!!fd.get('signer'), admin:!!fd.get('admin'), active: id ? !!fd.get('active') : true};
+  const v = {name:(fd.get('name')||'').trim(), title:(fd.get('title')||'').trim(), email:(fd.get('email')||'').trim().toLowerCase(), dept:fd.get('dept'), acct:!!fd.get('acct'), signer:!!fd.get('signer'), admin:!!fd.get('admin'), dash:!!fd.get('dash'), active: id ? !!fd.get('active') : true};
   const errs = [];
   if (v.name.length < 2) errs.push('Nhập họ và tên.');
   if (!v.title) errs.push('Nhập chức danh.');
@@ -2376,6 +2378,122 @@ document.addEventListener('click', async e => {
   const b = e.target.closest('button[data-action="logout"]'); if (!b) return;
   if (SB) await SB.auth.signOut();
   location.reload();
+});
+
+/* ===================== Dashboard quản trị (chỉ người được phân quyền) ===================== */
+const canDash = u => !!u && !!(u.admin || u.dash);
+function dashRange(p){
+  const d = new Date();
+  const start = p === 'month' ? new Date(d.getFullYear(), d.getMonth(), 1).getTime()
+    : new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)).getTime();
+  return {start, label: p === 'month' ? 'tháng này' : 'tuần này'};
+}
+function dashData(){
+  const D = UI.dash || {period:'week', dept:''}; const {start} = dashRange(D.period);
+  const inDept = r => !D.dept || r.dept === D.dept;
+  const live = S.reqs.filter(r => r.status !== 'draft' && inDept(r));
+  const created = live.filter(r => (r.createdAt || 0) >= start && !['rejected','cancelled'].includes(r.status));
+  const sum = (list, fn) => list.reduce((a,r) => a + (fn ? fn(r) : r.amount), 0);
+  const paidP = S.reqs.filter(r => r.status === 'paid' && (r.paidAt || 0) >= start && inDept(r));
+  const in7 = now() + 7*24*H;
+  const toPay7 = live.filter(r => r.status === 'in_batch' && r.batchId && batch(r.batchId) && new Date(batch(r.batchId).payDate + 'T23:59:59').getTime() <= in7);
+  const pending = live.filter(r => r.status === 'pending');
+  const hasInv = r => r.evidence === 'vat' || r.evidence === 'sale';
+  const grp = (list, keyFn) => {
+    const m = {}; list.forEach(r => { const k = keyFn(r); const g = (m[k] = m[k] || {k, n:0, amt:0, has:0}); g.n++; g.amt += r.amount; if (hasInv(r)) g.has += r.amount; });
+    return Object.values(m).sort((a,b) => b.amt - a.amt);
+  };
+  const createdAmt = sum(created);
+  const doneP = live.filter(r => r.approvedAt && r.submittedAt && r.approvedAt >= start);
+  const advOpen = S.reqs.filter(r => r.evidence === 'advance' && ['waiting','overdue','submitted','refund_waiting'].includes(advState(r)) && inDept(r));
+  const invOver = S.reqs.filter(r => invPending(r) && r.invDue && now() > r.invDue && inDept(r));
+  const invAll = S.reqs.filter(r => invPending(r) && inDept(r));
+  return {
+    period: D.period, label: dashRange(D.period).label, dept: D.dept,
+    paid: {n: paidP.length, amt: sum(paidP)},
+    due7: {n: toPay7.length, amt: sum(toPay7)},
+    pending: {n: pending.length, amt: sum(pending)},
+    created: {n: created.length, amt: createdAmt, hasAmt: sum(created, r => hasInv(r) ? r.amount : 0)},
+    byDept: grp(created, r => (dept(r.dept) || {name:'Chưa gán phòng'}).name).map(g => ({...g, share: createdAmt ? g.amt / createdAmt : 0, noInv: g.amt - g.has})),
+    byCat: grp(created, r => r.cat).map(g => ({...g, cov: g.amt ? g.has / g.amt : 0})),
+    risk: {
+      invOver: {n: invOver.length, amt: sum(invOver)},
+      invAll: {n: invAll.length, amt: sum(invAll)},
+      advOver: S.reqs.filter(r => advState(r) === 'overdue' && inDept(r)).length,
+      advOpen: {n: advOpen.length, amt: sum(advOpen)},
+      refundWait: sum(S.reqs.filter(r => r.settle && r.settle.refund && r.settle.refund.status === 'waiting' && inDept(r)), r => r.settle.refund.amount),
+      vendorsUnv: S.vendors.filter(v => !v.deleted && !v.verified).length,
+      returned: live.filter(r => r.status === 'returned').length,
+      speedD: doneP.length ? doneP.reduce((a,r) => a + (r.approvedAt - r.submittedAt), 0) / doneP.length / (24*H) : null,
+      speedN: doneP.length,
+      covPct: createdAmt ? sum(created, r => hasInv(r) ? r.amount : 0) / createdAmt : null
+    }
+  };
+}
+function dashCard(title, big, note, tone){
+  return `<div class="card" style="padding:16px 18px"><p class="eyebrow" style="margin:0 0 6px">${title}</p><div style="font-size:20px;font-weight:600;${tone === 'bad' ? 'color:var(--critical)' : ''}">${big}</div>${note ? `<p class="small muted" style="margin:6px 0 0">${note}</p>` : ''}</div>`;
+}
+function viewDash(){
+  const D = UI.dash = UI.dash || {period:'week', dept:''};
+  const k = dashData();
+  const share = v => (v * 100).toFixed(1) + '%';
+  const bar = (v, c) => `<div style="height:6px;background:var(--line,#eee);border-radius:3px;overflow:hidden"><i style="display:block;height:100%;width:${Math.min(100, v*100).toFixed(1)}%;background:${c||'var(--accent,#0f766e)'}"></i></div>`;
+  const tabBtn = (v, t) => `<button role="tab" aria-selected="${D.period===v}" class="${D.period===v?'on':''}" data-dperiod="${v}">${t}</button>`;
+  return `${head('Quản trị', 'Dashboard quản trị', `Dòng tiền, phân bổ chi phí và rủi ro, ${k.label}. Chỉ người được phân quyền xem.`,
+    `<div class="row"><div class="tabs" role="tablist" style="margin:0">${tabBtn('week','Tuần')}${tabBtn('month','Tháng')}</div><button class="btn sec sm" data-dexport="1">${icon('download',14)} Xuất Excel</button></div>`)}
+  <div class="card" style="padding:12px 16px;margin-bottom:16px"><div class="row"><span class="small faint">Phòng chịu chi phí</span><select class="in" data-ddept style="max-width:240px"><option value="">Tất cả phòng</option>${S.depts.map(d => `<option value="${d.id}" ${D.dept===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}</select></div></div>
+
+  <p class="eyebrow" style="margin:0 0 8px">Dòng tiền</p>
+  <div class="g3" style="margin-bottom:16px">
+    ${dashCard(`Đã chi ${k.label}`, money(k.paid.amt), `${k.paid.n} khoản đã chuyển`)}
+    ${dashCard('Sẽ chi trong 7 ngày tới', money(k.due7.amt), `${k.due7.n} khoản trong đợt chi, đã duyệt`)}
+    ${dashCard('Đang chờ duyệt', money(k.pending.amt), `${k.pending.n} đề xuất đang chờ người duyệt`)}
+  </div>
+  <div class="g3" style="margin-bottom:16px">
+    ${dashCard(`Đề xuất mới ${k.label}`, money(k.created.amt), `${k.created.n} đề xuất, không tính đã huỷ và từ chối`)}
+    ${dashCard('Tỉ lệ có hoá đơn', k.risk.covPct == null ? '—' : share(k.risk.covPct), 'Tính theo giá trị đề xuất mới trong kỳ')}
+    ${dashCard('Tốc độ duyệt', k.risk.speedD == null ? '—' : k.risk.speedD.toFixed(1) + ' ngày', k.risk.speedN ? `Trung bình từ gửi đến duyệt, ${k.risk.speedN} đề xuất trong kỳ` : 'Chưa có đề xuất duyệt xong trong kỳ')}
+  </div>
+
+  <div class="card" style="margin-bottom:16px"><div class="ch"><h2 class="card-title">Chi theo phòng chịu chi phí · ${k.label}</h2><span class="card-note">${k.byDept.length} phòng</span></div>
+    ${k.byDept.length ? `<div class="tw"><table><thead><tr><th>Phòng</th><th class="r">Số lệnh</th><th class="r">Giá trị (đ)</th><th style="width:22%">Tỉ trọng</th><th class="r">Có hoá đơn (đ)</th><th class="r">Chưa có hoá đơn (đ)</th></tr></thead><tbody>
+    ${k.byDept.map(g => `<tr><td>${esc(g.k)}</td><td class="r">${g.n}</td><td class="r">${fmt(g.amt)}</td><td>${bar(g.share)}<span class="small faint">${share(g.share)}</span></td><td class="r">${fmt(g.has)}</td><td class="r" style="${g.noInv ? 'color:var(--critical)' : ''}">${g.noInv ? fmt(g.noInv) : '—'}</td></tr>`).join('')}
+    </tbody></table></div>` : '<div class="empty" style="padding:16px"><b>Chưa có đề xuất trong kỳ</b></div>'}
+  </div>
+
+  <div class="card" style="margin-bottom:16px"><div class="ch"><h2 class="card-title">Chi theo hạng mục · ${k.label}</h2><span class="card-note">${k.byCat.length} hạng mục</span></div>
+    ${k.byCat.length ? `<div class="tw"><table><thead><tr><th>Hạng mục</th><th class="r">Số lệnh</th><th class="r">Giá trị (đ)</th><th style="width:26%">Phủ hoá đơn</th></tr></thead><tbody>
+    ${k.byCat.map(g => `<tr><td>${esc(g.k)}</td><td class="r">${g.n}</td><td class="r">${fmt(g.amt)}</td><td>${bar(g.cov, g.cov < 0.5 ? 'var(--critical)' : undefined)}<span class="small faint">${share(g.cov)}</span></td></tr>`).join('')}
+    </tbody></table></div>` : '<div class="empty" style="padding:16px"><b>Chưa có đề xuất trong kỳ</b></div>'}
+  </div>
+
+  <p class="eyebrow" style="margin:0 0 8px">Rủi ro cần xử lý</p>
+  <div class="g3" style="margin-bottom:16px">
+    ${dashCard('Quá hạn bổ sung hoá đơn', `${k.risk.invOver.n} khoản`, `Tổng ${money(k.risk.invOver.amt)}. Khoản chi chưa có hoá đơn quá hạn nộp`, k.risk.invOver.n ? 'bad' : '')}
+    ${dashCard('Tạm ứng quá hạn quyết toán', `${k.risk.advOver} khoản`, `Đang mở ${k.risk.advOpen.n} khoản tạm ứng, ${money(k.risk.advOpen.amt)}`, k.risk.advOver ? 'bad' : '')}
+    ${dashCard('Hoàn ứng thừa chờ nhận', money(k.risk.refundWait), 'Người đề xuất cần hoàn lại công ty, kế toán chưa xác nhận')}
+  </div>
+  <div class="g3">
+    ${dashCard('NCC chưa xác minh tài khoản', `${k.risk.vendorsUnv}`, 'Xác minh trong danh bạ NCC trước khi đưa vào đợt chi', k.risk.vendorsUnv ? 'bad' : '')}
+    ${dashCard('Đề xuất đang bị trả lại', `${k.risk.returned}`, 'Người đề xuất cần bổ sung hoặc sửa')}
+    ${dashCard('Chi phí đang chờ bổ sung hoá đơn', money(k.risk.invAll.amt), `${k.risk.invAll.n} khoản đã chi, chưa đủ hoá đơn (toàn bộ thời gian)`)}
+  </div>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return; const d = b.dataset;
+  if (d.dperiod) { UI.dash = Object.assign({period:'week', dept:''}, UI.dash, {period: d.dperiod}); renderMain(); return; }
+  if (d.dexport) {
+    const k = dashData(); const pct = v => v == null ? '' : Math.round(v*1000)/10;
+    exportXlsx(`Dashboard_quan_tri_${localDate()}.xlsx`, [
+      {name:'Phong', rows:[['Phòng','Số lệnh','Giá trị (đ)','Tỉ trọng (%)','Có hoá đơn (đ)','Chưa có hoá đơn (đ)']].concat(k.byDept.map(g => [g.k, g.n, g.amt, pct(g.share), g.has, g.noInv]))},
+      {name:'Hang muc', rows:[['Hạng mục','Số lệnh','Giá trị (đ)','Phủ hoá đơn (%)']].concat(k.byCat.map(g => [g.k, g.n, g.amt, pct(g.cov)]))},
+      {name:'Rui ro', rows:[['Chỉ tiêu','Giá trị'],['Đã chi trong kỳ (đ)', k.paid.amt],['Sẽ chi 7 ngày tới (đ)', k.due7.amt],['Đang chờ duyệt (đ)', k.pending.amt],['Quá hạn bổ sung hoá đơn (khoản)', k.risk.invOver.n],['Tạm ứng quá hạn (khoản)', k.risk.advOver],['Hoàn ứng thừa chờ nhận (đ)', k.risk.refundWait],['NCC chưa xác minh', k.risk.vendorsUnv],['Đề xuất bị trả lại', k.risk.returned],['Tốc độ duyệt TB (ngày)', k.risk.speedD == null ? '' : Math.round(k.risk.speedD*10)/10]]}
+    ]);
+    return;
+  }
+});
+document.addEventListener('change', e => {
+  if (e.target.dataset.ddept != null) { UI.dash = Object.assign({period:'week', dept:''}, UI.dash, {dept: e.target.value}); renderMain(); }
 });
 
 /* Khởi động sau khi mọi khối đã khai báo. */
