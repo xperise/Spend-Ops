@@ -78,7 +78,7 @@ const catGroup = c => c === REFUND_CAT ? 'Không phải chi phí' : (S.cats.find
 const catOptions = sel => S.cats.filter(g => g[1].length).map(g => `<optgroup label="${esc(g[0])}">${g[1].map(c => `<option ${c===sel?'selected':''}>${esc(c)}</option>`).join('')}</optgroup>`).join('') + (sel && sel !== REFUND_CAT && !S.cats.some(g => g[1].includes(sel)) ? `<option selected>${esc(sel)}</option>` : '');
 const INV_DAYS = 7;
 const ADV_DAYS = 15; // hạn quyết toán tạm ứng, tính từ ngày chi
-function guessKind(name){ const n = noAccent(name).toLowerCase();
+function guessKind(name){ const n = noAccent(fname(name)).toLowerCase();
   if (/\.xml$/.test(n) || /gtgt|hd_|hoa_?don|invoice|vat/.test(n)) return 'vat';
   if (/dntt|de_?nghi/.test(n)) return 'dntt'; if (/hop_?dong|contract/.test(n)) return 'contract'; if (/bao_?gia|quote/.test(n)) return 'quote';
   if (/nghiem_?thu/.test(n)) return 'accept'; if (/sao_?ke|statement/.test(n)) return 'statement'; if (/bill|receipt|bien_?nhan|\.(png|jpe?g|heic)$/.test(n)) return 'bill';
@@ -646,7 +646,55 @@ function pdfStub(lines){
   const x = out.length;
   return out + `xref\n0 ${objs.length+1}\n0000000000 65535 f \n` + offs.map(o => String(o).padStart(10,'0') + ' 00000 n \n').join('') + `trailer\n<< /Size ${objs.length+1} /Root 1 0 R >>\nstartxref\n${x}\n%%EOF`;
 }
-function uncData(name, r){ return BLOBS[name] || pdfStub(['UNC mau (prototype)', `File: ${name}`, `Phieu: ${r.code}`, `Nguoi nhan: ${payeeOf(r).accName}`, `So tien: ${fmt(r.amount)} VND`, `Noi dung: ${memoOf(r)}`]); }
+const ATTACH_BUCKET = 'attachments'; const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const UPLOADS = {};   // key -> {ok, err, p}: trạng thái tải lên Supabase Storage
+const fname = key => (S && S.fileNames && S.fileNames[key]) || String(key).replace(/^[0-9a-f]{8}_/, '');   // tên gốc người dùng chọn (lưu trong dữ liệu)
+function newKey(name){
+  const id = (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16)).replace(/-/g,'').slice(0,8);
+  return `${id}_${String(name).replace(/[^\w.\-]+/g,'_').slice(0,120)}`;
+}
+/* Chọn file là tải lên ngay (nền). Trả về khoá lưu trong dữ liệu, hoặc null nếu quá lớn. */
+function addBlob(file){
+  if (file.size > MAX_FILE_BYTES) { toast(`${file.name} lớn hơn 10 MB, chọn file nhỏ hơn.`); return null; }
+  const key = newKey(file.name); BLOBS[key] = file;
+  S.fileNames = S.fileNames || {}; S.fileNames[key] = file.name;
+  const entry = {ok:false, err:null, p:null}; UPLOADS[key] = entry;
+  entry.p = Promise.resolve(SB.storage.from(ATTACH_BUCKET).upload(`files/${key}`, file, {contentType: file.type || 'application/octet-stream', upsert:false}))
+    .then(res => { if (res.error) throw res.error; entry.ok = true; })
+    .catch(err => { entry.err = (err && err.message) || 'lỗi tải lên'; });
+  return key;
+}
+/* Chờ các file đã chọn tải xong. File lỗi thì bỏ khỏi form và báo lại. */
+async function flushUploads(keys){
+  const list = (keys || []).filter(k => UPLOADS[k]);
+  await Promise.all(list.map(k => UPLOADS[k].p));
+  const bad = list.filter(k => !UPLOADS[k].ok);
+  if (!bad.length) return true;
+  bad.forEach(k => { delete UPLOADS[k]; delete BLOBS[k]; });
+  if (UI.form && UI.form.files) UI.form.files = UI.form.files.filter(x => !bad.includes(x.name));
+  if (UI.payDraft && UI.payDraft.files) {
+    const P = UI.payDraft; const old = P.files; P.files = old.filter(x => !bad.includes(x));
+    for (const id of Object.keys(P.map)) { const ni = P.files.indexOf(old[P.map[id]]); if (ni < 0) delete P.map[id]; else P.map[id] = ni; }
+  }
+  UI.settleFiles = (UI.settleFiles || []).filter(x => !bad.includes(x));
+  toast(`Chưa tải lên được ${bad.length} file: ${bad.map(fname).join(', ')}. Đã bỏ khỏi danh sách, hãy chọn lại.`);
+  renderMain(); return false;
+}
+/* Lấy nội dung file: từ bộ nhớ nếu vừa chọn, không thì tải từ Supabase Storage. */
+async function fileBlob(key){
+  if (BLOBS[key]) return BLOBS[key];
+  const { data, error } = await SB.storage.from(ATTACH_BUCKET).download(`files/${key}`);
+  if (error || !data) throw new Error(`Không tải được ${fname(key)} từ máy chủ`);
+  return data;
+}
+async function downloadKey(key){
+  try { const b = await fileBlob(key); await saveFile(fname(key), b); }
+  catch (e) { toast(e.message || 'Không tải được file'); }
+}
+async function zipKeys(filename, items){ // items: [{name, key}]
+  try { const got = []; for (const it of items) got.push({name: it.name, data: await fileBlob(it.key)}); await zipUnc(filename, got); }
+  catch (e) { toast(e.message || 'Không tải được file để nén'); }
+}
 function safeName(n){ return /\.(pdf|png|jpe?g|gif|webp|zip|xlsx|csv|txt)$/i.test(n) ? n : n + '.pdf'; }
 async function zipUnc(filename, items){ // items: [{name, data}]
   if (typeof JSZip === 'undefined') { toast('Chưa tải được thư viện nén file, thử lại sau vài giây.'); return; }
@@ -796,7 +844,7 @@ function viewForm(){
         <label class="f">Số tiền đề nghị thanh toán lần này<div class="money"><input class="in ${E.amount?'err':''}" name="amount" inputmode="numeric" value="${f.amount?fmt(f.amount):''}" placeholder="0" data-money autocomplete="off"><span>đ</span></div>${E.amount?`<span class="ferr">${E.amount}</span>`:''}<span class="hint" id="amtHint">${esc(amountHint(f))}</span></label>
         <div class="f"><span class="flabel">Thanh toán nhiều đợt</span><span class="hint" style="font-size:12.5px">Đặt cọc hoặc trả theo đợt: giữ bảng trên theo tổng giá trị, sửa ô bên trái thành số tiền của đợt này.</span></div>`}
         <div class="f full"><span class="flabel">Đính kèm</span>
-          ${f.files.length ? `<div class="flist">${f.files.map((x,i) => `<div class="frow">${icon('file',15)}<span class="fname">${esc(x.name)}</span><select class="in" data-fkind="${i}" aria-label="Loại file ${esc(x.name)}">${Object.entries(FKIND).map(([k,n]) => `<option value="${k}" ${x.kind===k?'selected':''}>${n}</option>`).join('')}</select><button type="button" class="copy" data-rmfile="${i}" aria-label="Bỏ ${esc(x.name)}">${icon('x')}</button></div>`).join('')}</div>` : ''}
+          ${f.files.length ? `<div class="flist">${f.files.map((x,i) => `<div class="frow">${icon('file',15)}<span class="fname">${esc(fname(x.name))}</span><select class="in" data-fkind="${i}" aria-label="Loại file ${esc(x.name)}">${Object.entries(FKIND).map(([k,n]) => `<option value="${k}" ${x.kind===k?'selected':''}>${n}</option>`).join('')}</select><button type="button" class="copy" data-rmfile="${i}" aria-label="Bỏ ${esc(x.name)}">${icon('x')}</button></div>`).join('')}</div>` : ''}
           <div class="row"><label class="btn sec sm" style="position:relative">${icon('clip',14)} Thêm file<input type="file" multiple data-files style="position:absolute;opacity:0;width:1px;height:1px"></label><span class="hint">Chọn loại cho từng file. Mọi loại chứng từ đều đính kèm được, kể cả khi chưa có hoá đơn.</span></div>
           ${E.files?`<span class="ferr">${E.files}</span>`:''}</div>
         <label class="f full">Ghi chú cho người duyệt<textarea class="in" name="note" placeholder="Mục đích, căn cứ, người tham dự">${esc(f.note)}</textarea></label>
@@ -886,9 +934,10 @@ function applyForm(r, f){
     payMethod: refund || f.payeeType === 'me' ? 'transfer' : f.payMethod,
     payee: refund ? Object.assign({type:'other'}, f.other) : f.payeeType === 'me' ? {type:'me', outlay:f.outlay} : {type:'vendor', vendorId:f.vendorId}});
 }
-function submitForm(){
+async function submitForm(){
   readForm(); const f = UI.form; const E = validate(f); UI.errors = E;
   if (Object.keys(E).length) { renderMain(); toast(E.chain || 'Kiểm tra lại các ô báo đỏ.'); return; }
+  if (!(await flushUploads(f.files.map(x => x.name)))) return;
   let r = req(f.id);
   if (!r || f.isNew) { r = newReq({id:f.id, requester:S.me, lines:[]}); S.reqs.push(r); }
   applyForm(r, f);
@@ -973,7 +1022,7 @@ function chainHtml(chain, preview){
       </div></div>`).join('')}</div>`;
 }
 const fileChips = (files, dl, r) => files.map(x => { const n = typeof x === 'string' ? x : x.name; const k = typeof x === 'string' ? '' : FKIND[x.kind];
-  return `<span class="chip file">${icon('file',13)} ${esc(n)}${k ? `<span class="lvn">${k}</span>` : ''}${dl ? `<button type="button" data-dlunc="${esc(n)}" data-r="${r.id}" aria-label="Tải ${esc(n)}" title="Tải về">${icon('upload',12)}</button>` : ''}</span>`; }).join('');
+  return `<span class="chip file">${icon('file',13)} ${esc(fname(n))}${k ? `<span class="lvn">${k}</span>` : ''}<button type="button" data-dlunc="${esc(n)}" data-r="${r ? r.id : ''}" aria-label="Tải ${esc(fname(n))}" title="Tải về">${icon('upload',12)}</button></span>`; }).join('');
 function viewDetail(){
   const r = req(UI.id); if (!r) return `<div class="card empty"><b>Không tìm thấy phiếu</b></div>`;
   const u = me(); const p = payeeOf(r); const mine = r.requester === u.id;
@@ -1157,8 +1206,8 @@ function payModal(bid, ids){
 }
 /* Gợi ý ghép UNC với khoản theo tên file: mã phiếu, STK người nhận, số tiền, tên người nhận. Bản thật đọc nội dung UNC (OCR/parse PDF) để lấy STK và số tiền. */
 function uncMatch(name, r){
-  const flat = noAccent(name).toLowerCase().replace(/[^a-z0-9]/g,'');
-  const nums = (name.match(/\d[\d.,]*/g) || []).map(x => x.replace(/[.,]/g,''));
+  const flat = noAccent(fname(name)).toLowerCase().replace(/[^a-z0-9]/g,'');
+  const nums = (fname(name).match(/\d[\d.,]*/g) || []).map(x => x.replace(/[.,]/g,''));
   const p = payeeOf(r);
   if (flat.includes(r.code.toLowerCase().replace(/[^a-z0-9]/g,''))) return ['mã phiếu', 4];
   const acc = String(p.acc).replace(/\D/g,''); if (acc.length >= 6 && nums.some(n => n.includes(acc))) return ['STK', 3];
@@ -1216,7 +1265,7 @@ function drawPayModal(){
     <div class="modal-b stack">
       <label class="drop">${icon('upload',20)}<b style="font-weight:500;color:var(--ink)">${multi ? 'Kéo thả hoặc chọn nhiều file UNC cùng lúc' : pmOf(req(P.ids[0])) === 'transfer' ? 'Đính kèm UNC' : 'Đính kèm sao kê thẻ hoặc phiếu chi'}</b><span class="small faint">PDF hoặc ảnh. ${multi ? 'Hệ thống tự ghép file với khoản theo tên file: đúng cột “TEN FILE UNC” trong Excel, hoặc có mã phiếu, STK, số tiền, tên người nhận.' : 'Uỷ nhiệm chi hoặc sao kê ngân hàng.'}</span><input type="file" multiple data-unc></label>
       ${multi && !P.files.length ? `<div class="row"><span class="small faint" style="flex:1">Chưa có file thật để thử?</span><button type="button" class="btn ghost sm" data-uncdemo="1">Thêm ${P.ids.length} file UNC mẫu</button></div>` : ''}
-      ${P.files.length ? `<div class="chips">${P.files.map((n,i)=>`<span class="chip file ${multi && P.mode==='each' && !count[i] ? 'warnc' : ''}" ${multi && P.mode==='each' && !count[i] ? 'title="Chưa gán khoản nào"' : ''}>${esc(n)}<button type="button" data-rmunc="${i}" aria-label="Bỏ ${esc(n)}">${icon('x',12)}</button></span>`).join('')}</div>` : ''}
+      ${P.files.length ? `<div class="chips">${P.files.map((n,i)=>`<span class="chip file ${multi && P.mode==='each' && !count[i] ? 'warnc' : ''}" ${multi && P.mode==='each' && !count[i] ? 'title="Chưa gán khoản nào"' : ''}>${esc(fname(n))}<button type="button" data-rmunc="${i}" aria-label="Bỏ ${esc(fname(n))}">${icon('x',12)}</button></span>`).join('')}</div>` : ''}
       ${multi && P.files.length ? `<div class="row"><div class="seg" role="group" aria-label="Cách gắn UNC"><button type="button" class="${P.mode==='each'?'on':''}" data-umode="each" aria-pressed="${P.mode==='each'}">Mỗi khoản một UNC</button><button type="button" class="${P.mode==='one'?'on':''}" data-umode="one" aria-pressed="${P.mode==='one'}">Dùng chung cho cả ${P.ids.length} khoản</button></div>
         <span class="sp"></span>${P.mode==='each' ? `<span class="small faint">${mapped}/${P.ids.length} khoản đã gán</span>${mapped < P.ids.length && P.files.length >= P.ids.length ? '<button type="button" class="btn ghost sm" data-uncorder="1">Gán theo thứ tự file</button>' : ''}` : ''}</div>` : ''}
       ${mapTable}
@@ -1469,7 +1518,7 @@ function renderSettle(){
         ${rows.map((x,i) => `<tr><td><input class="in cell" data-sr="${i}" data-sk="inv" value="${esc(x.inv)}" aria-label="Số hoá đơn dòng ${i+1}" autocomplete="off"></td><td><input class="in cell" data-sr="${i}" data-sk="desc" value="${esc(x.desc)}" aria-label="Diễn giải dòng ${i+1}" autocomplete="off"></td><td><input class="in cell r" data-sr="${i}" data-sk="total" data-money inputmode="numeric" value="${x.total ? fmt(digits(x.total)) : ''}" aria-label="Thành tiền dòng ${i+1}" autocomplete="off"></td><td><input class="in cell r" data-sr="${i}" data-sk="tax" data-money inputmode="numeric" value="${x.tax ? fmt(digits(x.tax)) : ''}" aria-label="Tiền thuế dòng ${i+1}" autocomplete="off"></td><td>${rows.length > 1 ? `<button type="button" class="copy" data-srowrm="${i}" aria-label="Xoá dòng ${i+1}">${icon('x')}</button>` : ''}</td></tr>`).join('')}
       </tbody></table></div>
       <div class="row"><button type="button" class="btn ghost sm" data-srowadd="1">${icon('plus',14)} Thêm dòng</button><label class="btn sec sm" style="position:relative">${icon('clip',14)} Đính kèm hoá đơn<input type="file" multiple accept=".pdf,.xml,image/*" data-sfiles style="position:absolute;opacity:0;width:1px;height:1px"></label></div>
-      ${UI.settleFiles.length ? `<div class="chips">${UI.settleFiles.map(n => `<span class="chip file">${icon('file',13)} ${esc(n)}</span>`).join('')}</div>` : ''}
+      ${UI.settleFiles.length ? `<div class="chips">${UI.settleFiles.map(n => `<span class="chip file">${icon('file',13)} ${esc(fname(n))}</span>`).join('')}</div>` : ''}
       <div class="alert info" id="setSum">${settleSummary(r, settleSpent())}</div>
       <p class="small faint" style="margin:0">Tiền thuế không bắt buộc. Nếu chi thêm, phiếu chênh lệch sẽ đi qua chuỗi duyệt giống đề xuất thường.</p>
       <div id="mErr"></div></div>
@@ -1585,7 +1634,7 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('change', async e => {
   const t = e.target; const d = t.dataset;
-  if (d.sfiles != null && t.files) { [...t.files].forEach(f => { BLOBS[f.name] = f; if (!UI.settleFiles.includes(f.name)) UI.settleFiles.push(f.name); }); t.value = ''; renderSettle(); return; }
+  if (d.sfiles != null && t.files) { [...t.files].forEach(f => { const k = addBlob(f); if (k) UI.settleFiles.push(k); }); t.value = ''; renderSettle(); return; }
   if (d.vimport != null && t.files && t.files[0]) { const f = t.files[0]; t.value = '';
     if (typeof XLSX === 'undefined') { toast('Chưa tải được thư viện Excel, thử lại sau vài giây.'); return; }
     try { const wb = XLSX.read(await f.arrayBuffer(), {type:'array'}); const p = parseVendorRows(wb);
@@ -1673,11 +1722,7 @@ document.addEventListener('click', e => {
   if (d.rm) { const l = listAt(d.rm); const i = l.indexOf(d.uid); if (i >= 0) l.splice(i,1); const lv = cfgPath(d.rm); if (!Array.isArray(lv) && lv.approvers.length < 2) lv.mode = 'any'; renderMain(); return; }
   const a = d.action;
   if (a === 'confirmyes') { const fn = confirmFn; confirmFn = null; closeModal(); if (fn) fn(); return; }
-  if (a === 'confirmpay') { const P = UI.payDraft; P.date = $('#payDate').value || P.date;
-    const iss = payIssues(); if (iss.length) { P.err = iss.map(esc).join('<br>'); drawPayModal(); return; }
-    const b = batch(P.bid); const at = new Date(P.date + 'T' + new Date().toTimeString().slice(0,8)).getTime() || now();
-    payLines(b, P.ids, S.me, P.mode === 'each' && P.ids.length > 1 ? id => [P.files[P.map[id]]] : P.files, at); P.ids.forEach(id => delete UI.paySel[id]); S.guideDone.pay = true; save(); closeModal();
-    toast(b.status === 'paid' ? `Đã chuyển xong đợt ${b.code}` : `Đã đánh dấu ${P.ids.length} khoản đã chuyển`); render(); return; }
+  if (a === 'confirmpay') { confirmPay(); return; }
   if (a === 'reset') { askConfirm('Khôi phục dữ liệu mẫu?', 'Mọi phiếu, đợt chi và cấu hình đã đổi trên trình duyệt này sẽ mất.', 'Khôi phục', () => { seed(); UI.inboxSel = {}; UI.batchSel = {}; go('home'); toast('Đã khôi phục dữ liệu mẫu'); }); return; }
   if (a === 'savedraft') { saveDraft(); return; }
   if (a === 'deldraft') { const r = req(UI.form.id); S.reqs = S.reqs.filter(x => x !== r); save(); toast('Đã xoá nháp'); go('list'); return; }
@@ -1723,7 +1768,7 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const t = e.target; const d = t.dataset;
   if (d.change === 'persona') { setPersona(t.value); return; }
-  if (d.unc != null) { UI.payDraft.date = $('#payDate')?.value || UI.payDraft.date; addUncFiles([...t.files].map(f => { BLOBS[f.name] = f; return f.name; })); drawPayModal(); return; }
+  if (d.unc != null) { UI.payDraft.date = $('#payDate')?.value || UI.payDraft.date; addUncFiles([...t.files].map(f => addBlob(f)).filter(Boolean)); drawPayModal(); return; }
   if (d.umap) { const P = UI.payDraft; P.date = $('#payDate')?.value || P.date; if (t.value === '') { delete P.map[d.umap]; } else { P.map[d.umap] = +t.value; } P.why[d.umap] = ''; drawPayModal(); return; }
   if (t.closest('#reqForm') && ['payeeType','vendorId','type','evidence','payMethod','outlay'].includes(t.name)) { readForm(); const f = UI.form;
     if (t.name === 'evidence' && (f.evidence === 'bill' || f.evidence === 'sale')) { f.lines.forEach(l => { l.rate = 'kct'; l.tax = 0; l.pre = l.total; }); }
@@ -1745,7 +1790,7 @@ document.addEventListener('change', e => {
 ['dragover','drop'].forEach(type => document.addEventListener(type, e => {
   const z = e.target.closest && e.target.closest('.drop'); if (!z || !UI.payDraft) return;
   e.preventDefault();
-  if (type === 'drop' && e.dataTransfer) { UI.payDraft.date = $('#payDate')?.value || UI.payDraft.date; addUncFiles([...e.dataTransfer.files].map(f => { BLOBS[f.name] = f; return f.name; })); drawPayModal(); }
+  if (type === 'drop' && e.dataTransfer) { UI.payDraft.date = $('#payDate')?.value || UI.payDraft.date; addUncFiles([...e.dataTransfer.files].map(f => addBlob(f)).filter(Boolean)); drawPayModal(); }
 }));
 
 document.addEventListener('submit', e => {
@@ -2122,7 +2167,7 @@ document.addEventListener('click', e => {
   if (d.rmline != null) { readForm(); UI.form.lines.splice(+d.rmline,1); if (!UI.form.amountManual) UI.form.amount = linesSum(UI.form.lines,'total'); renderMain(); return; }
   if (a === 'addline') { readForm(); const f = UI.form; f.lines.push(blankLine(f.evidence === 'bill' || f.evidence === 'sale' ? 'kct' : (f.lines[f.lines.length-1] || {}).rate)); renderMain(); refocus(`[data-ln="${f.lines.length-1}"][data-k="inv"]`); return; }
   if (a === 'pastelines') { readForm(); pasteModal(); return; }
-  if (a === 'xmldemo') { readForm(); const p = parseInvoiceXml(SAMPLE_XML); const f = UI.form; applyInvoice(p, 'HD_00214586.xml'); if (!f.files.some(x => x.name === 'HD_00214586.xml')) f.files.push({name:'HD_00214586.xml', kind:'vat'}); renderMain(); return; }
+  if (a === 'xmldemo') { readForm(); const p = parseInvoiceXml(SAMPLE_XML); const f = UI.form; applyInvoice(p, 'HD_00214586.xml'); const dk = addBlob(new File([SAMPLE_XML], 'HD_00214586.xml', {type:'text/xml'})); if (dk) f.files.push({name:dk, kind:'vat'}); renderMain(); return; }
   if (a === 'newvendor') { readForm(); vendorModal(null, {ctx:'form'}); return; }
   if (a === 'dnewvendor') { UI.dprefill = formPrefill('#directForm'); vendorModal(null, {ctx:'direct'}); return; }
   if (d.vnew) { vendorModal(null, {ctx:'dir'}); return; }
@@ -2130,7 +2175,7 @@ document.addEventListener('click', e => {
   if (d.vdel) { vendorDelete(d.vdel); return; }
   if (a === 'direct') { directModal(); return; }
   if (d.verify) { const v = vendor(d.verify); v.verified = true; v.verifiedBy = S.me; S.reqs.forEach(r => { if (r.payee.vendorId === v.id && ['pending','approved','in_batch'].includes(r.status)) log(r, S.me, `Xác minh STK ${v.bank} ${v.acc} của ${v.name}`); }); save(); toast(`Đã xác minh STK của ${v.name}`); UI.errors = {}; render(); return; }
-  if (d.dlunc) { const r = req(d.r); saveFile(safeName(d.dlunc), uncData(d.dlunc, r)); return; }
+  if (d.dlunc) { downloadKey(d.dlunc); return; }
   if (d.addinv) { invModal(d.addinv); return; }
   if (d.remindinv) { const r = req(d.remindinv); log(r, S.me, `Nhắc ${user(r.requester).name} bổ sung hoá đơn, hạn ${dOnly(r.invDue)}`); r.invReminded = now(); save(); toast(`Đã nhắc ${user(r.requester).name}`); render(); return; }
   if (d.refundgot) { const r = req(d.refundgot); r.refundBack.status = 'received'; r.refundBack.receivedAt = now(); log(r, S.me, `Đã nhận NCC hoàn ${fmt(r.refundBack.amount)} đ`); save(); toast('Đã ghi nhận tiền hoàn'); render(); return; }
@@ -2148,11 +2193,11 @@ document.addEventListener('click', e => {
       {name:'TAT CA KHOAN', rows:[['STT','MA PHIEU','NGUOI THU HUONG','HINH THUC','SO TIEN','TRANG THAI','NGAY CHI','TEN FILE UNC','UNC DA DINH KEM']].concat(b.reqIds.map((id,i) => { const r = req(id), ln = b.lines[id]; return [i+1, r.code, payeeOf(r).accName, bankText(PAYM[pmOf(r)]), r.amount, ln.paidAt ? 'DA CHI' : 'CHUA CHI', ln.paidAt ? dt(ln.paidAt) : '', uncName(b,id), ln.unc.join(', ')]; }))}
     ]); return; }
   if (d.zunc) { const b = batch(d.zunc); const items = [];
-    b.reqIds.forEach(id => { const ln = b.lines[id]; if (!ln.paidAt) return; ln.unc.forEach((n,k) => { const base = uncName(b,id); const ext = (n.match(/\.[a-z0-9]+$/i) || ['.pdf'])[0]; items.push({name: base.replace(/\.pdf$/, (k ? '_' + (k+1) : '') + (BLOBS[n] ? ext : '.pdf')), data: uncData(n, req(id))}); }); });
-    zipUnc(`UNC_${b.code}.zip`, items); return; }
+    b.reqIds.forEach(id => { const ln = b.lines[id]; if (!ln.paidAt) return; ln.unc.forEach((n,k) => { const base = uncName(b,id); const ext = (fname(n).match(/\.[a-z0-9]+$/i) || ['.pdf'])[0]; items.push({name: base.replace(/\.pdf$/, (k ? '_' + (k+1) : '') + ext), key: n}); }); });
+    zipKeys(`UNC_${b.code}.zip`, items); return; }
   if (d.selck) { const b = batch(d.selck); const ck = b.reqIds.filter(id => !b.lines[id].paidAt && pmOf(req(id)) === 'transfer'); const all = ck.every(id => UI.paySel[id]); ck.forEach(id => UI.paySel[id] = !all); renderMain(); return; }
   if (a === 'xlist') { exportXlsx(`De_xuat_chi_${localDate()}.xlsx`, [{name:'De xuat chi', rows:reqExportRows(UI.listShown || [])}]); return; }
-  if (a === 'zuncs') { const items = []; (UI.listShown || []).forEach(id => { const r = req(id); (r.unc || []).forEach(n => items.push({name:`${r.code}_${BLOBS[n] ? n : n.replace(/\.[a-z0-9]+$/i,'') + '.pdf'}`, data:uncData(n, r)})); }); zipUnc(`UNC_de_xuat_${localDate()}.zip`, items); return; }
+  if (a === 'zuncs') { const items = []; (UI.listShown || []).forEach(id => { const r = req(id); (r.unc || []).forEach((n,k) => items.push({name: `${r.code}_${k ? (k+1) + '_' : ''}${fname(n)}`, key: n})); }); zipKeys(`UNC_de_xuat_${localDate()}.zip`, items); return; }
   if (a === 'xbatches') { const bs = S.batches.filter(b => inRange(b.createdAt, UI.bflt));
     exportXlsx(`Dot_chi_${localDate()}.xlsx`, [{name:'Dot chi', rows:[['STT','Mã đợt','Ngày giờ lập','Người lập','Hẹn thanh toán','Số khoản','Tổng tiền','Trạng thái','Người duyệt','Duyệt thay','Ngày duyệt','Ngày chi xong']].concat(bs.map((b,i) => [i+1, b.code, dt(b.createdAt), user(b.createdBy).name, dOnly(b.payDate+'T00:00'), b.reqIds.length, batchTotal(b), BSTATUS[b.status][0], b.approvedBy ? user(b.approvedBy).name : '', b.approvedFor ? user(b.approvedFor).name : '', b.approvedAt ? dt(b.approvedAt) : '', b.paidAt ? dt(b.paidAt) : '']))},
       {name:'Chi tiet khoan', rows:[['Mã đợt','STT','Mã phiếu','Nội dung','Người thụ hưởng','Hình thức','Số tiền','Ngày chi','UNC']].concat(bs.flatMap(b => b.reqIds.map((id,i) => { const r = req(id), ln = b.lines[id]; return [b.code, i+1, r.code, r.title, payeeOf(r).name, PAYM[pmOf(r)], r.amount, ln.paidAt ? dt(ln.paidAt) : '', ln.unc.join(', ')]; })))}]); return; }
@@ -2174,7 +2219,7 @@ document.addEventListener('change', async e => {
   if ((d.files != null || d.invfiles != null) && t.closest('#reqForm')) {
     readForm(); const f = UI.form; let parsed = 0; const inv = d.invfiles != null; let other = 0;
     for (const file of [...t.files]) {
-      BLOBS[file.name] = file; if (!f.files.some(x => x.name === file.name)) f.files.push({name:file.name, kind: inv ? (f.evidence === 'sale' ? 'sale' : 'vat') : guessKind(file.name)});
+      const key = addBlob(file); if (key) f.files.push({name:key, kind: inv ? (f.evidence === 'sale' ? 'sale' : 'vat') : guessKind(file.name)});
       if (inv && !/\.xml$/i.test(file.name)) other++;
       if (/\.xml$/i.test(file.name)) { try { const p = parseInvoiceXml(await file.text()); if (p && p.lines.length) { applyInvoice(p, file.name); parsed++; } else toast(`Không đọc được ${file.name}, nhập tay bảng tiền và thuế.`); } catch (err) {} }
     }
@@ -2193,7 +2238,7 @@ document.addEventListener('input', e => {
   if (d.flt && t.type === 'search') { const [k, f] = d.flt.split('.'); UI[k][f] = t.value; renderMain(); refocus(`[data-flt="${d.flt}"]`); }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset && e.target.dataset.vq != null) { e.preventDefault(); const m = vendorMatches(e.target.value); if (m.length) { readForm(); UI.form.vendorId = m[0].id; UI.vq = ''; renderMain(); } } });
-document.addEventListener('submit', e => {
+document.addEventListener('submit', async e => {
   const f = e.target; const fd = new FormData(f); const g = k => (fd.get(k) || '').toString().trim();
   if (f.id === 'dueForm') { const r = req(UI.dueFor); const v = g('settleDue');
     if (!r) return; if (!v || v < localDate()) return mErr('Chọn hạn quyết toán, không được ở quá khứ.');
@@ -2204,6 +2249,7 @@ document.addEventListener('submit', e => {
     if (!rows.length || rows.some(x => !digits(x.total))) return mErr('Mỗi dòng cần thành tiền lớn hơn 0.');
     if (rows.some(x => !String(x.inv || '').trim())) return mErr('Điền số hoá đơn cho từng dòng.');
     if (!UI.settleFiles.length) return mErr('Đính kèm ít nhất một hoá đơn hoặc chứng từ chi.');
+    if (!(await flushUploads(UI.settleFiles))) return;
     const msg = submitSettle(adv, rows, UI.settleFiles.slice(), S.me); save(); closeModal(); toast(msg); renderMain(); return; }
   if (f.id === 'renameForm') { const k = UI.renameKind || {}; const name = g('name');
     if (name.length < 2) return mErr('Nhập tên, tối thiểu 2 ký tự.');
@@ -2234,14 +2280,16 @@ document.addEventListener('submit', e => {
     return; }
   if (f.id === 'directForm') { const total = digits(g('total')), tax = digits(g('tax')); const title = g('title');
     if (title.length < 6) return mErr('Ghi rõ nội dung chi, tối thiểu 6 ký tự.'); if (!g('vendorId')) return mErr('Chọn nhà cung cấp.'); if (!total) return mErr('Nhập thành tiền.'); if (tax >= total) return mErr('Tiền thuế phải nhỏ hơn thành tiền.');
-    const names = [...(f.querySelector('[name=files]').files || [])].map(x => { BLOBS[x.name] = x; return x.name; });
+    const names = [...(f.querySelector('[name=files]').files || [])].map(x => addBlob(x)).filter(Boolean);
     const pre = total - tax; const rk = tax ? String(Math.round(tax / pre * 100)) : 'kct';
+    if (!(await flushUploads(names))) return;
     const r = newReq({title, amount:total, dept:g('dept'), cat:g('cat'), evidence: g('inv') ? 'vat' : 'later', payMethod:g('payMethod'), payee:{type:'vendor', vendorId:g('vendorId')}, files:names, requester:S.me, direct:true,
       lines:[{inv:g('inv'), desc:title, pre, rate:RATES[rk] ? rk : '10', tax, total}]});
     r.code = nextCode('A'); r.status = 'approved'; r.approvedAt = now(); r.submittedAt = now(); log(r, S.me, 'Kế toán lập khoản chi trực tiếp, không qua đề xuất'); S.reqs.push(r); UI.batchSel[r.id] = true;
     save(); closeModal(); toast(`Đã thêm ${r.code} vào chờ thanh toán`); render(); return; }
-  if (f.id === 'invForm') { const r = req(UI.invFor); const names = [...(f.querySelector('[name=files]').files || [])].map(x => { BLOBS[x.name] = x; return x.name; }); const inv = g('inv');
+  if (f.id === 'invForm') { const r = req(UI.invFor); const names = [...(f.querySelector('[name=files]').files || [])].map(x => addBlob(x)).filter(Boolean); const inv = g('inv');
     if (!inv) return mErr('Nhập số hoá đơn.'); if (!names.length) return mErr('Đính kèm file hoá đơn.');
+    if (!(await flushUploads(names))) return;
     const tax = digits(g('tax')); const nos = inv.split(',').map(x => x.trim()).filter(Boolean);
     r.lines.forEach((l,i) => { if (!l.inv) l.inv = nos[Math.min(i, nos.length-1)]; });
     const cur = linesSum(r.lines,'tax'); if (tax !== cur && r.lines.length) { const l = r.lines[r.lines.length-1]; l.tax += tax - cur; l.pre = l.total - l.tax; }
@@ -2279,7 +2327,7 @@ function freshState(){
   };
 }
 function normalizeState(x){
-  x.guideDone = x.guideDone || {}; x.users = x.users || []; x.vendors = x.vendors || []; x.reqs = x.reqs || [];
+  x.guideDone = x.guideDone || {}; x.fileNames = x.fileNames || {}; x.users = x.users || []; x.vendors = x.vendors || []; x.reqs = x.reqs || [];
   x.batches = x.batches || []; x.delegations = x.delegations || []; x.userBanks = x.userBanks || {}; x.seq = x.seq || {A:0, PB:0};
   x.config.batch = x.config.batch || {bands:[{id:'bB1', max:null, levels:[{approvers:[], mode:'any'}]}]};
   x.config.fallback = x.config.fallback || []; x.config.noInvoice = x.config.noInvoice || {on:true, approvers:[]};
@@ -2503,3 +2551,10 @@ document.addEventListener('change', e => {
 
 /* Khởi động sau khi mọi khối đã khai báo. */
 boot();
+
+async function confirmPay(){ const P = UI.payDraft; P.date = $('#payDate').value || P.date;
+    const iss = payIssues(); if (iss.length) { P.err = iss.map(esc).join('<br>'); drawPayModal(); return; }
+    if (!(await flushUploads(P.files))) return;
+    const b = batch(P.bid); const at = new Date(P.date + 'T' + new Date().toTimeString().slice(0,8)).getTime() || now();
+    payLines(b, P.ids, S.me, P.mode === 'each' && P.ids.length > 1 ? id => [P.files[P.map[id]]] : P.files, at); P.ids.forEach(id => delete UI.paySel[id]); S.guideDone.pay = true; save(); closeModal();
+    toast(b.status === 'paid' ? `Đã chuyển xong đợt ${b.code}` : `Đã đánh dấu ${P.ids.length} khoản đã chuyển`); render(); return; }
