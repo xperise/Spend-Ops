@@ -771,7 +771,7 @@ function formFrom(r){
   const sum = linesSum(lines,'total');
   return {id:r.id, isNew, type:r.type||'opex', title:r.title, amount:r.amount, amountManual: !!r.amount && r.amount !== sum, dept:r.dept, cat:isNew ? ((S.cats.find(g => g[1].length) || [0,['Khác']])[1][0]) : r.cat, evidence:r.evidence, payMethod:r.payMethod||'transfer',
     payeeType:r.payee.type === 'other' ? 'vendor' : r.payee.type, vendorId:r.payee.vendorId||'v1', outlay:r.payee.outlay||'transfer', other: r.payee.type === 'other' ? {name:r.payee.name, acc:r.payee.acc, bank:r.payee.bank} : {name:'', acc:'', bank:''},
-    needBy:r.needBy||'', settleDue: r.settleDue ? localDate(r.settleDue) : '', booking: clone(r.booking||{}), invDate: r.invDate||'', note:r.note||'', files:clone(r.files), lines, status:r.status};
+    needBy:r.needBy||'', settleDue: r.settleDue ? localDate(r.settleDue) : '', note:r.note||'', files:clone(r.files), lines, status:r.status};
 }
 function linesTable(f){
   return `<div class="tw"><table class="lines"><thead><tr><th style="width:104px">Số hoá đơn</th><th>Diễn giải</th><th class="r" style="width:118px">Trước thuế</th><th style="width:78px">Thuế suất</th><th class="r" style="width:104px">Tiền thuế</th><th class="r" style="width:118px">Thành tiền</th><th style="width:34px"></th></tr></thead>
@@ -846,15 +846,6 @@ function viewForm(){
         ${f.evidence === 'advance' ? '' : `<div class="f full"><span class="flabel">Tiền và thuế</span>${linesTable(f)}${E.lines?`<span class="ferr">${E.lines}</span>`:''}</div>`}
         <label class="f">Số tiền đề nghị thanh toán lần này<div class="money"><input class="in ${E.amount?'err':''}" name="amount" inputmode="numeric" value="${f.amount?fmt(f.amount):''}" placeholder="0" data-money autocomplete="off"><span>đ</span></div>${E.amount?`<span class="ferr">${E.amount}</span>`:''}<span class="hint" id="amtHint">${esc(amountHint(f))}</span></label>
         <div class="f"><span class="flabel">Thanh toán nhiều đợt</span><span class="hint" style="font-size:12.5px">Đặt cọc hoặc trả theo đợt: giữ bảng trên theo tổng giá trị, sửa ô bên trái thành số tiền của đợt này.</span></div>`}
-        <div class="f full"><span class="flabel">Thông tin booking và hoá đơn (không bắt buộc)</span>
-          <div class="fgrid">
-            <label class="f">Khách sạn<input class="in" name="hotel" value="${esc((f.booking||{}).hotel||'')}" autocomplete="off"></label>
-            <label class="f">Mã booking<input class="in" name="bcode" value="${esc((f.booking||{}).code||'')}" autocomplete="off"></label>
-            <label class="f">Khách<input class="in" name="guest" value="${esc((f.booking||{}).guest||'')}" autocomplete="off"></label>
-            <label class="f">Ngày hoá đơn<input class="in" type="date" name="invDate" value="${esc(f.invDate||'')}"></label>
-            <label class="f">Check-in<input class="in" type="date" name="checkin" value="${esc((f.booking||{}).checkin||'')}"></label>
-            <label class="f">Check-out<input class="in" type="date" name="checkout" value="${esc((f.booking||{}).checkout||'')}"></label>
-          </div></div>
         <div class="f full"><span class="flabel">Đính kèm</span>
           ${f.files.length ? `<div class="flist">${f.files.map((x,i) => `<div class="frow">${icon('file',15)}<span class="fname">${esc(fname(x.name))}</span><select class="in" data-fkind="${i}" aria-label="Loại file ${esc(x.name)}">${Object.entries(FKIND).map(([k,n]) => `<option value="${k}" ${x.kind===k?'selected':''}>${n}</option>`).join('')}</select><button type="button" class="copy" data-rmfile="${i}" aria-label="Bỏ ${esc(x.name)}">${icon('x')}</button></div>`).join('')}</div>` : ''}
           <div class="row"><label class="btn sec sm" style="position:relative">${icon('clip',14)} Thêm file<input type="file" multiple data-files style="position:absolute;opacity:0;width:1px;height:1px"></label><span class="hint">Chọn loại cho từng file. Mọi loại chứng từ đều đính kèm được, kể cả khi chưa có hoá đơn.</span></div>
@@ -875,7 +866,6 @@ function readForm(){
   const fm = $('#reqForm'); if (!fm) return; const fd = new FormData(fm); const f = UI.form;
   f.type = fd.get('type') || 'opex'; f.title = (fd.get('title')||'').trim(); f.dept = fd.get('dept'); if (fd.get('cat')) f.cat = fd.get('cat');
   f.needBy = fd.get('needBy')||''; f.settleDue = fd.get('settleDue')||'';
-  f.booking = {hotel:(fd.get('hotel')||'').trim(), code:(fd.get('bcode')||'').trim(), guest:(fd.get('guest')||'').trim(), checkin:fd.get('checkin')||'', checkout:fd.get('checkout')||''}; f.invDate = fd.get('invDate')||''; f.note = (fd.get('note')||'').trim();
   if (fd.get('evidence')) f.evidence = fd.get('evidence'); if (fd.get('payMethod')) f.payMethod = fd.get('payMethod');
   if (fd.get('payeeType')) f.payeeType = fd.get('payeeType');
   if (fd.get('vendorId')) f.vendorId = fd.get('vendorId'); if (fd.get('outlay')) f.outlay = fd.get('outlay');
@@ -942,7 +932,6 @@ function validate(f){
 }
 function applyForm(r, f){
   const refund = f.type === 'refund';
-  r.booking = Object.fromEntries(Object.entries(f.booking || {}).filter(([k,v]) => String(v || '').trim() !== '')); if (!Object.keys(r.booking).length) delete r.booking; r.invDate = f.invDate || undefined;
   if (!refund && f.evidence === 'advance' && f.settleDue) r.settleDue = new Date(f.settleDue + 'T23:59:59').getTime(); else if (f.evidence !== 'advance') delete r.settleDue;
   Object.assign(r, {type:f.type, title:f.title || 'Nháp chưa đặt tên', amount:f.amount, dept:f.dept, cat: refund ? REFUND_CAT : f.cat, evidence: refund ? 'bill' : f.evidence, needBy:f.needBy, note:f.note, files:clone(f.files),
     lines: refund ? [{inv:'', desc:f.title, pre:f.amount, rate:'kct', tax:0, total:f.amount}] : clone(f.lines.filter(l => l.total || l.inv || l.desc)),
@@ -2075,7 +2064,6 @@ function invModal(id){
     <div class="modal-b"><div class="fgrid">
       <label class="f">Số hoá đơn<input class="in" name="inv" autocomplete="off" placeholder="Nhiều số cách nhau dấu phẩy"></label>
       <label class="f">Tiền thuế trên hoá đơn<div class="money"><input class="in" name="tax" inputmode="numeric" data-money value="${fmt(linesSum(r.lines,'tax'))}" autocomplete="off"><span>đ</span></div><span class="hint">Sửa nếu lệch với ĐNTT.</span></label>
-      <label class="f">Ngày hoá đơn<input class="in" type="date" name="invDate" value="${esc(r.invDate||'')}"></label>
       <label class="f full">File hoá đơn (PDF, XML)<input class="in" type="file" name="files" multiple style="padding:6px 10px;height:auto"></label>
     </div><div id="mErr" style="margin-top:12px"></div></div>
     <div class="modal-f"><button type="button" class="btn sec" data-close="1">Huỷ</button><button type="submit" class="btn pri">Lưu hoá đơn</button></div></form>`, 520);
@@ -2363,7 +2351,7 @@ document.addEventListener('submit', async e => {
     const tax = digits(g('tax')); const nos = inv.split(',').map(x => x.trim()).filter(Boolean);
     r.lines.forEach((l,i) => { if (!l.inv) l.inv = nos[Math.min(i, nos.length-1)]; });
     const cur = linesSum(r.lines,'tax'); if (tax !== cur && r.lines.length) { const l = r.lines[r.lines.length-1]; l.tax += tax - cur; l.pre = l.total - l.tax; }
-    names.forEach(n => r.files.push({name:n, kind:'vat'})); r.invDone = {at:now(), by:S.me, inv:nos, files:names}; if (g('invDate')) r.invDate = g('invDate');
+    names.forEach(n => r.files.push({name:n, kind:'vat'})); r.invDone = {at:now(), by:S.me, inv:nos, files:names};
     log(r, S.me, `Bổ sung hoá đơn ${nos.join(', ')}${tax !== cur ? `, chỉnh tiền thuế ${fmt(cur)} → ${fmt(tax)} đ` : ''}`); save(); closeModal(); toast('Đã bổ sung hoá đơn'); render(); return; }
   if (f.id === 'pasteForm') { const ls = parsePaste(fd.get('text') || ''); if (!ls.length) return mErr('Không đọc được dòng nào. Kiểm tra thứ tự cột và dấu tab giữa các cột.');
     const fm = UI.form; if (fm.lines.every(l => !l.total && !l.inv)) fm.lines = []; fm.lines = fm.lines.concat(ls); if (!fm.amountManual) fm.amount = linesSum(fm.lines,'total');
@@ -2690,13 +2678,11 @@ const ddmmyyyy = s => s ? String(s).split('-').reverse().join('/') : '';
 const hasInv = r => r.evidence === 'vat' || r.evidence === 'sale' || !!r.invDone;
 function bookingRowsFor(ids){
   const rs = ids.map(id => req(id)).filter(Boolean);
-  const bk = r => r.booking || {};
   const cols = [
-    ['Mã đề xuất', r => r.code || ''], ['Khách sạn', r => bk(r).hotel || ''], ['Mã booking', r => bk(r).code || ''], ['Khách', r => bk(r).guest || ''],
-    ['Check-in', r => ddmmyyyy(bk(r).checkin)], ['Check-out', r => ddmmyyyy(bk(r).checkout)], ['Số tiền', r => r.amount],
+    ['Mã đề xuất', r => r.code || ''], ['Số tiền', r => r.amount],
     ['Trạng thái chi', r => STATUS[r.status][0]], ['Ngày chi', r => dtFull(r.paidAt)], ['Ngày tạo phiếu', r => dtFull(r.createdAt)],
     ['Hình thức', r => PAYM[pmOf(r)]], ['Nội dung CK', r => memoOf(r)], ['Người tạo', r => user(r.requester).name],
-    ['Có hoá đơn?', r => hasInv(r) ? 'Có' : 'Chưa'], ['SỐ HÓA ĐƠN ', r => invNos(r).join(', ')], ['NGÀY HÓA ĐƠN ', r => ddmmyyyy(r.invDate)],
+    ['Có hoá đơn?', r => hasInv(r) ? 'Có' : 'Chưa'], ['SỐ HÓA ĐƠN ', r => invNos(r).join(', ')],
     ['TÊN NHÀ CUNG CẤP', r => payeeOf(r).name], ['MÃ SỐ THUẾ NHÀ CUNG CẤP', r => (r.payee && r.payee.type === 'vendor' && (vendor(r.payee.vendorId) || {}).tax) || payeeOf(r).tax || ''], ['SỐ TIỀN THANH TOÁN', r => r.amount],
     ['Số file HĐ', r => (r.files || []).length], ['Tên file hoá đơn', r => (r.files || []).map(x => fname(x.name)).join('; ')],
   ];
