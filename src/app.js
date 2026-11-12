@@ -514,6 +514,7 @@ function roleLine(u){
   return line;
 }
 function renderSide(){
+  document.body.classList.remove('auth');
   const u = me();
   const inbox = inboxFor(u.id).length;
   const bcount = (u.acct ? S.reqs.filter(r => r.status === 'approved').length + batchesToPay().length : 0) + batchesToApprove(u.id).length;
@@ -2288,16 +2289,20 @@ function fatal(msg){
   $root().innerHTML = `<div class="card" style="max-width:520px;margin:48px auto"><h1 style="margin:0 0 8px;font-size:18px">Không mở được ứng dụng</h1><p class="muted" style="margin:0 0 16px">${esc(msg)}</p><button class="btn sec" data-action="logout">Đăng xuất</button></div>`;
 }
 function renderLogin(msg){
+  document.body.classList.add('auth');
   const side = document.getElementById('side'); if (side) side.innerHTML = '';
-  $root().innerHTML = `<div class="card" style="max-width:420px;margin:48px auto">
-    <p class="eyebrow">Xperise</p><h1 style="margin:0 0 6px;font-size:20px">Đăng nhập Spend Ops</h1>
-    <p class="small muted" style="margin:0 0 16px">Tài khoản do quản trị hệ thống cấp. Không có đăng ký công khai.</p>
+  $root().innerHTML = `<div class="auth-wrap"><div class="auth-card">
+    <div class="auth-brand"><span class="logo logo-lg" role="img" aria-label="Xperise"></span><span class="auth-app">Spend Ops · Đề xuất chi và phê duyệt</span></div>
+    <h1>Đăng nhập</h1>
+    <p class="sub">Dùng tài khoản do quản trị hệ thống cấp cho bạn.</p>
     <form id="loginForm" class="stack" novalidate>
-      <label class="f">Email<input class="in" name="email" type="email" required autocomplete="username"></label>
+      <label class="f">Email<input class="in" name="email" type="email" required autocomplete="username" placeholder="ten@xperise.com"></label>
       <label class="f">Mật khẩu<input class="in" name="password" type="password" required autocomplete="current-password"></label>
       ${msg ? `<div class="alert neg">${esc(msg)}</div>` : ''}
       <button class="btn pri" type="submit">Đăng nhập</button>
-    </form></div>`;
+    </form>
+    <p class="auth-foot">Không có đăng ký công khai. Quên mật khẩu? Liên hệ quản trị hệ thống.</p>
+  </div></div>`;
 }
 function renderNoAccess(){
   fatal(`Tài khoản ${SESSION_EMAIL} chưa được thêm vào hệ thống. Nhờ quản trị thêm email này ở mục Người dùng.`);
