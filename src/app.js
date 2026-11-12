@@ -420,8 +420,8 @@ const paidCount = b => b.reqIds.filter(id => b.lines[id]?.paidAt).length;
 const noAccent = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D');
 const bankText = s => noAccent(s).toUpperCase().replace(/[^A-Z0-9 .,\-\/]/g,' ').replace(/\s+/g,' ').trim();
 function payeeOf(r){
-  if (r.payee.type === 'me') { const u = user(r.requester); const ub = S.userBanks[r.requester] || {bank:'Vietcombank', acc:'0011002233445'};
-    return {name:u.name, accName:bankText(u.name), note:'Hoàn ứng', bank:ub.bank, acc:ub.acc, ok:true}; }
+  if (r.payee.type === 'me') { const u = user(r.requester) || {name:'—'}; const ub = r.payee.acc ? r.payee : (S.userBanks[r.requester] || {});
+    return {name:u.name, accName:ub.accName || bankText(u.name), note:'Hoàn ứng', bank:ub.bank || '', acc:ub.acc || '', ok:!!(ub.bank && ub.acc)}; }
   if (r.payee.type === 'other') return {name:r.payee.name, accName:bankText(r.payee.accName || r.payee.name), note:'Hoàn tiền', bank:r.payee.bank, acc:r.payee.acc, ok:true};
   const v = vendor(r.payee.vendorId) || {};
   return {name:v.name || '—', accName:v.accName || bankText(v.name || ''), note:'', bank:v.bank || '—', acc:v.acc || '—', tax:v.tax, ok:!!v.verified, vendorId:v.id};
@@ -466,7 +466,7 @@ const invPending = r => r.evidence === 'later' && r.status === 'paid' && !r.invD
 const invWaitList = () => S.reqs.filter(invPending).sort((a,b) => a.invDue - b.invDue);
 
 /* ===================== Quyền xem ===================== */
-function canSeeAll(u){ return u.admin || u.acct || u.signer; }
+function canSeeAll(u){ return u.admin || u.acct || u.signer || u.dash; }   // người xem dashboard/báo cáo thấy toàn công ty
 function visibleReqs(){
   const u = me();
   return S.reqs.filter(r => {
@@ -524,6 +524,7 @@ function renderSide(){
     ['inbox','check','Chờ tôi duyệt',inbox],
     ...(seesBatches(u) ? [['batches','wallet','Đợt chi',bcount]] : []),
     ['delegate','swap','Ủy quyền duyệt',0],
+    ['profile','users','Tài khoản cá nhân',0],
     ['reports','chart','Lịch sử, báo cáo',0],
     ...(canDash(u) ? [['dash','chart','Dashboard quản trị',0]] : []),
     ...(u.admin ? [['users','users','Người dùng',0]] : []), ...((u.admin || u.acct) ? [['config','gear','Cấu hình',0]] : [])
@@ -539,7 +540,7 @@ function renderSide(){
 }
 function renderMain(){
   const v = UI.view; const m = $('#main');
-  const views = {home:viewHome, list:viewList, inbox:viewInbox, new:viewForm, edit:viewForm, detail:viewDetail, batches:viewBatches, batch:viewBatch, delegate:viewDelegate, reports:viewReports, dash:() => canDash(me()) ? viewDash() : `<div class="card empty"><b>Chỉ người được phân quyền mới xem được dashboard</b>Nhờ quản trị bật quyền “Dashboard quản trị” cho bạn.</div>`, users:() => me().admin ? viewUsers() : `<div class="card empty"><b>Chỉ Quản trị quản lý người dùng</b></div>`, config:() => (me().admin || me().acct) ? viewConfig() : `<div class="card empty"><b>Chỉ Quản trị và Kế toán mở được cấu hình</b>Đổi vai sang Quản trị hệ thống ở góc trái.</div>`};
+  const views = {home:viewHome, list:viewList, inbox:viewInbox, new:viewForm, edit:viewForm, detail:viewDetail, batches:viewBatches, batch:viewBatch, delegate:viewDelegate, profile:viewProfile, reports:viewReports, dash:() => canDash(me()) ? viewDash() : `<div class="card empty"><b>Chỉ người được phân quyền mới xem được dashboard</b>Nhờ quản trị bật quyền “Dashboard quản trị” cho bạn.</div>`, users:() => me().admin ? viewUsers() : `<div class="card empty"><b>Chỉ Quản trị quản lý người dùng</b></div>`, config:() => (me().admin || me().acct) ? viewConfig() : `<div class="card empty"><b>Chỉ Quản trị và Kế toán mở được cấu hình</b>Đổi vai sang Quản trị hệ thống ở góc trái.</div>`};
   m.innerHTML = (views[v] || viewHome)();
   if (v === 'new' || v === 'edit') updatePreview();
   if (v === 'config') updateSim();
@@ -836,7 +837,7 @@ function viewForm(){
               ${v ? `<div class="vsel"><div><b>${esc(v.name)}</b><div class="small faint">${v.tax ? 'MST ' + esc(v.tax) + ' · ' : ''}${esc(v.bank)} ${esc(v.acc)} · ${esc(v.accName || '')}</div></div>${v.verified ? '<span class="pill st-approved">STK đã xác minh</span>' : '<span class="pill st-returned">STK chưa xác minh</span>'}</div>` : ''}
               <div class="row" style="flex-wrap:nowrap"><input class="in" type="search" data-vq placeholder="Tìm nhà cung cấp khác theo tên, MST hoặc số tài khoản" value="${esc(UI.vq||'')}" autocomplete="off" aria-label="Tìm nhà cung cấp"><button type="button" class="btn sec" data-action="newvendor">${icon('plus',16)} NCC mới</button></div>
               <div id="vres">${vendorResults()}</div>${v && !v.verified ? '<span class="hint">STK chưa xác minh: vẫn gửi duyệt được, kế toán xác minh trước khi đưa vào đợt chi.</span>' : ''}</div>`
-          : `<label class="f full">Tôi đã trả bằng<select class="in ${E.outlay?'err':''}" name="outlay">${Object.entries(OUTLAY).map(([k,x]) => `<option value="${k}" ${f.outlay===k?'selected':''}>${x}</option>`).join('')}</select>${E.outlay?`<span class="ferr">${E.outlay}</span>`:''}</label>`}
+          : `${meBankCard(E)}<label class="f full">Tôi đã trả bằng<select class="in ${E.outlay?'err':''}" name="outlay">${Object.entries(OUTLAY).map(([k,x]) => `<option value="${k}" ${f.outlay===k?'selected':''}>${x}</option>`).join('')}</select>${E.outlay?`<span class="ferr">${E.outlay}</span>`:''}</label>`}
         <div class="f full"><span class="flabel">Chứng từ hiện có</span>
           <div class="choice five" role="radiogroup" aria-label="Chứng từ">${Object.entries(EVIDENCE).map(([k,x]) => `<label><input type="radio" name="evidence" value="${k}" ${f.evidence===k?'checked':''}>${x[0]}<span>${x[1]}</span></label>`).join('')}</div>
           ${f.evidence==='later' ? `<span class="hint">Vẫn nhập đủ số tiền và thuế theo ĐNTT. Sau khi chi, hệ thống nhắc bạn và kế toán bổ sung hoá đơn trong ${INV_DAYS} ngày.</span>` : ''}${f.evidence==='advance' ? '<span class="hint">Tạm ứng không cần hoá đơn hay bảng tiền thuế. Chỉ nhập số tiền đề nghị và nội dung; chứng từ quyết toán sau.</span>' : ''}</div>
@@ -908,6 +909,7 @@ function validate(f){
   const E = {}; const kinds = f.files.map(x => x.kind); const sum = linesSum(f.lines,'total');
   if (!f.title || f.title.length < 6) E.title = 'Ghi rõ nội dung, tối thiểu 6 ký tự.';
   if (!f.amount) E.amount = 'Nhập số tiền lớn hơn 0.';
+  if (f.type !== 'refund' && f.payeeType === 'me' && !bankSnap(S.me).acc) E.payee = 'Chưa có tài khoản cá nhân. Nhập tài khoản nhận hoàn ứng trước khi gửi.';
   if (f.type !== 'refund' && f.evidence === 'advance' && (!f.settleDue || f.settleDue < localDate())) E.settleDue = 'Chọn hạn quyết toán, không được ở quá khứ.';
   if (f.type === 'refund') {
     if (!f.other.name || !f.other.acc || !f.other.bank) E.other = 'Nhập đủ tên người nhận, số tài khoản và ngân hàng.';
@@ -932,7 +934,7 @@ function applyForm(r, f){
   Object.assign(r, {type:f.type, title:f.title || 'Nháp chưa đặt tên', amount:f.amount, dept:f.dept, cat: refund ? REFUND_CAT : f.cat, evidence: refund ? 'bill' : f.evidence, needBy:f.needBy, note:f.note, files:clone(f.files),
     lines: refund ? [{inv:'', desc:f.title, pre:f.amount, rate:'kct', tax:0, total:f.amount}] : clone(f.lines.filter(l => l.total || l.inv || l.desc)),
     payMethod: refund || f.payeeType === 'me' ? 'transfer' : f.payMethod,
-    payee: refund ? Object.assign({type:'other'}, f.other) : f.payeeType === 'me' ? {type:'me', outlay:f.outlay} : {type:'vendor', vendorId:f.vendorId}});
+    payee: refund ? Object.assign({type:'other'}, f.other) : f.payeeType === 'me' ? Object.assign({type:'me', outlay:f.outlay}, bankSnap(S.me)) : {type:'vendor', vendorId:f.vendorId}});
 }
 async function submitForm(){
   readForm(); const f = UI.form; const E = validate(f); UI.errors = E;
@@ -1443,6 +1445,32 @@ function renameModal(kind, gi, ci){
     <div class="modal-h"><h3 id="rnh">${kind === 'cat' ? 'Sửa hạng mục' : 'Sửa tên nhóm'}</h3><p>${kind === 'cat' ? 'Tên mới áp dụng cho cả các phiếu đã lập có hạng mục này.' : 'Tên nhóm dùng để gom báo cáo và lọc.'}</p></div>
     <div class="modal-b"><label class="f">Tên mới<input class="in" name="name" value="${esc(cur)}" autocomplete="off"></label><div id="mErr" style="margin-top:12px"></div></div>
     <div class="modal-f"><button type="button" class="btn sec" data-close="1">Huỷ</button><button type="submit" class="btn pri">Lưu</button></div></form>`, 460);
+}
+const BANKS = ['Vietcombank','BIDV','VietinBank','Agribank','Techcombank','MB Bank','ACB','VPBank','TPBank','Sacombank','HDBank','VIB','SHB','MSB','OCB','SeABank','LPBank','Eximbank','Nam A Bank','Bắc Á Bank','Kienlongbank','Saigonbank'];
+const bankSnap = id => { const b = (S.userBanks || {})[id]; return b && b.acc ? {bank:b.bank, acc:b.acc, accName:b.accName} : {}; };
+function meBankCard(E){
+  const b = bankSnap(S.me);
+  return b.acc ? `<div class="f full"><span class="flabel">Tài khoản nhận hoàn ứng</span><div class="vsel"><div><b>${esc(b.accName || '')}</b><div class="small faint">${esc(b.bank)} · ${esc(b.acc)}</div></div><button type="button" class="btn ghost sm" data-bankedit="1">Đổi tài khoản</button></div><span class="hint">Tự điền từ Tài khoản cá nhân. Dò lại trước khi gửi.</span></div>`
+    : `<div class="f full"><span class="flabel">Tài khoản nhận hoàn ứng</span><div class="alert neg">${E.payee ? esc(E.payee) : 'Chưa có tài khoản cá nhân.'} <button type="button" class="btn sec sm" data-bankedit="1">Nhập tài khoản</button></div></div>`;
+}
+function bankModal(){
+  const b = bankSnap(S.me);
+  modal(`<form class="modal" id="bankForm" role="dialog" aria-modal="true" aria-labelledby="bkh" novalidate>
+    <div class="modal-h"><h3 id="bkh">Tài khoản cá nhân</h3><p>Tài khoản nhận tiền khi bạn chọn “Hoàn ứng cho tôi”. Kiểm tra kỹ số tài khoản trước khi lưu.</p></div>
+    <div class="modal-b"><div class="fgrid">
+      <label class="f">Ngân hàng<input class="in" name="bank" list="bankList" value="${esc(b.bank || '')}" placeholder="VD: Vietcombank" autocomplete="off"></label>
+      <label class="f">Số tài khoản<input class="in" name="acc" inputmode="numeric" value="${esc(b.acc || '')}" autocomplete="off"></label>
+      <label class="f full">Tên chủ tài khoản<input class="in" name="accName" value="${esc(b.accName || '')}" autocomplete="off" placeholder="NGUYEN VAN A"><span class="hint">Viết IN HOA, không dấu, đúng như trên ngân hàng.</span></label>
+    </div><datalist id="bankList">${BANKS.map(x => `<option value="${esc(x)}">`).join('')}</datalist><div id="mErr" style="margin-top:12px"></div></div>
+    <div class="modal-f"><button type="button" class="btn sec" data-close="1">Huỷ</button><button type="submit" class="btn pri">Lưu tài khoản</button></div></form>`, 520);
+}
+function viewProfile(){
+  const b = bankSnap(S.me);
+  return `${head('Cá nhân', 'Tài khoản cá nhân', 'Tài khoản nhận tiền khi bạn chọn “Hoàn ứng cho tôi” trong đề xuất chi.')}
+  <div class="card" style="max-width:620px"><div class="ch"><h2 class="card-title">Tài khoản nhận tiền</h2>${b.acc ? '<span class="pill st-approved">Đã có</span>' : '<span class="pill st-returned">Chưa có</span>'}</div>
+    ${b.acc ? `<div class="kv"><div><span>Ngân hàng</span><b>${esc(b.bank)}</b></div><div><span>Số tài khoản</span><b class="num">${esc(b.acc)}</b></div><div><span>Tên chủ tài khoản</span><b>${esc(b.accName)}</b></div></div>` : '<p class="muted" style="margin:0">Bạn chưa nhập tài khoản. Nhập một lần, các lần hoàn ứng sau sẽ tự điền vào đề xuất.</p>'}
+    <div class="row" style="margin-top:14px"><button class="btn pri" data-bankedit="1">${b.acc ? 'Sửa tài khoản' : 'Nhập tài khoản'}</button></div>
+    <p class="small faint" style="margin:12px 0 0">Đề xuất đã gửi giữ tài khoản lúc gửi. Đổi tài khoản chỉ áp dụng cho đề xuất gửi sau này.</p></div>`;
 }
 function formPrefill(sel){
   const f = $(sel); if (!f) return {}; const out = {};
@@ -2168,6 +2196,7 @@ document.addEventListener('click', e => {
   if (a === 'addline') { readForm(); const f = UI.form; f.lines.push(blankLine(f.evidence === 'bill' || f.evidence === 'sale' ? 'kct' : (f.lines[f.lines.length-1] || {}).rate)); renderMain(); refocus(`[data-ln="${f.lines.length-1}"][data-k="inv"]`); return; }
   if (a === 'pastelines') { readForm(); pasteModal(); return; }
   if (a === 'xmldemo') { readForm(); const p = parseInvoiceXml(SAMPLE_XML); const f = UI.form; applyInvoice(p, 'HD_00214586.xml'); const dk = addBlob(new File([SAMPLE_XML], 'HD_00214586.xml', {type:'text/xml'})); if (dk) f.files.push({name:dk, kind:'vat'}); renderMain(); return; }
+  if (d.bankedit != null) { if ($('#reqForm')) readForm(); bankModal(); return; }
   if (a === 'newvendor') { readForm(); vendorModal(null, {ctx:'form'}); return; }
   if (a === 'dnewvendor') { UI.dprefill = formPrefill('#directForm'); vendorModal(null, {ctx:'direct'}); return; }
   if (d.vnew) { vendorModal(null, {ctx:'dir'}); return; }
@@ -2244,6 +2273,12 @@ document.addEventListener('submit', async e => {
     if (!r) return; if (!v || v < localDate()) return mErr('Chọn hạn quyết toán, không được ở quá khứ.');
     const old = r.settleDue; r.settleDue = new Date(v + 'T23:59:59').getTime();
     log(r, S.me, `Đổi hạn quyết toán tạm ứng: ${dOnly(old)} → ${dOnly(r.settleDue)}`); save(); closeModal(); toast('Đã đổi hạn quyết toán'); renderMain(); return; }
+  if (f.id === 'bankForm') { const v = {bank: g('bank'), acc: g('acc').replace(/\s/g,''), accName: bankText(g('accName'))};
+    if (v.bank.length < 2) return mErr('Nhập tên ngân hàng.');
+    if (!/^\d{6,20}$/.test(v.acc)) return mErr('Số tài khoản chỉ gồm số, từ 6 đến 20 chữ số.');
+    if (v.accName.length < 3) return mErr('Nhập tên chủ tài khoản.');
+    S.userBanks = S.userBanks || {}; S.userBanks[S.me] = Object.assign(v, {updatedAt: now()});
+    save(); closeModal(); toast('Đã lưu tài khoản cá nhân'); renderMain(); return; }
   if (f.id === 'settleForm') { const adv = req(UI.settleFor); if (!adv) return;
     const rows = UI.settleRows.filter(x => digits(x.total) || String(x.inv || '').trim());
     if (!rows.length || rows.some(x => !digits(x.total))) return mErr('Mỗi dòng cần thành tiền lớn hơn 0.');
