@@ -2282,11 +2282,11 @@ document.addEventListener('submit', async e => {
     if (!r) return; if (!v || v < localDate()) return mErr('Chọn hạn quyết toán, không được ở quá khứ.');
     const old = r.settleDue; r.settleDue = new Date(v + 'T23:59:59').getTime();
     log(r, S.me, `Đổi hạn quyết toán tạm ứng: ${dOnly(old)} → ${dOnly(r.settleDue)}`); save(); closeModal(); toast('Đã đổi hạn quyết toán'); renderMain(); return; }
-  if (f.id === 'bankAddForm') { const code = g('code').toUpperCase().replace(/\s/g,''), name = g('name');
+  if (f.id === 'bankAddForm') { const code = g('code'), name = g('name');
     const err = bankAddEdit(code, name, null); if (err) { toast(err); return; }
-    S.banks.push({id:'bk'+code, code, name}); save(); toast(`Đã thêm ${name}`); renderMain(); return; }
+    S.banks.push({id:uid('bk'), code, name}); save(); toast(`Đã thêm ${name}`); renderMain(); return; }
   if (f.id === 'bankEditForm') { const bk = (S.banks || []).find(b => b.id === UI.bankEditFor); if (!bk) return;
-    const code = g('code').toUpperCase().replace(/\s/g,''), name = g('name');
+    const code = g('code'), name = g('name');
     const err = bankAddEdit(code, name, bk.id); if (err) return mErr(err);
     const old = bk.name;
     bk.code = code; bk.name = name;
@@ -2632,9 +2632,9 @@ function bankMasterHtml(){
   const list = bankList();
   return `<div class="card" style="padding:16px 18px">
     <div class="tw"><table><thead><tr><th style="width:130px">Mã</th><th>Tên ngân hàng</th><th class="r">Đang dùng</th><th></th></tr></thead><tbody>
-    ${list.map(bk => `<tr><td class="code">${esc(bk.code)}</td><td>${esc(bk.name)}</td><td class="r">${bankUsage(bk)}</td><td class="act"><button class="btn ghost sm" data-bkedit="${bk.id}">Sửa</button><button class="btn ghost sm" data-bkdel="${bk.id}" style="color:var(--critical)">Xoá</button></td></tr>`).join('')}
+    ${list.map(bk => `<tr><td class="code">${esc(bk.code)}</td><td>${esc(bk.name)}</td><td class="r">${bankUsage(bk)}</td><td class="act"><button class="btn ghost sm" data-bkedit="${esc(bk.id)}">Sửa</button><button class="btn ghost sm" data-bkdel="${esc(bk.id)}" style="color:var(--critical)">Xoá</button></td></tr>`).join('')}
     </tbody></table></div>
-    <form class="row" id="bankAddForm" style="margin-top:14px;gap:8px"><input class="in" name="code" placeholder="Mã, VD: VCB" autocomplete="off" aria-label="Mã ngân hàng" style="width:150px;height:34px"><input class="in" name="name" placeholder="Tên ngân hàng" autocomplete="off" aria-label="Tên ngân hàng" style="flex:1;max-width:340px;height:34px"><button class="btn sec sm" type="submit">${icon('plus',14)} Thêm ngân hàng</button></form>
+    <form class="row" id="bankAddForm" style="margin-top:14px;gap:8px"><input class="in" name="code" placeholder="Mã, VD: VCB" maxlength="300" autocomplete="off" aria-label="Mã ngân hàng" style="width:150px;height:34px"><input class="in" name="name" placeholder="Tên ngân hàng" maxlength="300" autocomplete="off" aria-label="Tên ngân hàng" style="flex:1;max-width:340px;height:34px"><button class="btn sec sm" type="submit">${icon('plus',14)} Thêm ngân hàng</button></form>
     <p class="small faint" style="margin:10px 0 0">Chỉ chọn được ngân hàng có trong danh sách này. Đổi tên sẽ đổi trên toàn bộ NCC và tài khoản đang dùng. Ngân hàng đang được dùng không xoá được.</p></div>`;
 }
 function bankEditModal(id){
@@ -2642,15 +2642,18 @@ function bankEditModal(id){
   modal(`<form class="modal" id="bankEditForm" role="dialog" aria-modal="true" aria-labelledby="bekh" novalidate>
     <div class="modal-h"><h3 id="bekh">Sửa ngân hàng</h3><p>Đổi tên sẽ đổi trên toàn bộ NCC và tài khoản cá nhân đang dùng tên cũ.</p></div>
     <div class="modal-b"><div class="fgrid">
-      <label class="f">Mã<input class="in" name="code" value="${esc(bk.code)}" autocomplete="off"></label>
-      <label class="f full">Tên ngân hàng<input class="in" name="name" value="${esc(bk.name)}" autocomplete="off"></label>
+      <label class="f">Mã<input class="in" name="code" value="${esc(bk.code)}" maxlength="300" autocomplete="off"></label>
+      <label class="f full">Tên ngân hàng<input class="in" name="name" value="${esc(bk.name)}" maxlength="300" autocomplete="off"></label>
     </div><div id="mErr" style="margin-top:12px"></div></div>
     <div class="modal-f"><button type="button" class="btn sec" data-close="1">Huỷ</button><button type="submit" class="btn pri">Lưu</button></div></form>`, 460);
 }
+const BANK_MAX = 300; // Mã và tên ngân hàng: nhập tự do mọi ký tự, tối đa 300 ký tự
 function bankAddEdit(code, name, id){
-  if (!/^[A-Z0-9]{2,8}$/.test(code)) return 'Mã gồm 2 đến 8 chữ hoặc số, không dấu.';
-  if (name.length < 2) return 'Nhập tên ngân hàng.';
-  const taken = (S.banks || []).some(b => b.id !== id && (normBank(b.name) === normBank(name) || b.code === code));
+  if (!code) return 'Nhập mã ngân hàng.';
+  if (code.length > BANK_MAX) return `Mã ngân hàng tối đa ${BANK_MAX} ký tự.`;
+  if (!name) return 'Nhập tên ngân hàng.';
+  if (name.length > BANK_MAX) return `Tên ngân hàng tối đa ${BANK_MAX} ký tự.`;
+  const taken = (S.banks || []).some(b => b.id !== id && (normBank(b.name) === normBank(name) || normBank(b.code) === normBank(code)));
   if (taken) return 'Mã hoặc tên này đã có trong danh sách.';
   return null;
 }
