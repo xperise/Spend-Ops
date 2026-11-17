@@ -48,3 +48,18 @@ git push -u origin main
 - Ghi dữ liệu theo phiên bản: nếu hai người cùng sửa, người lưu sau sẽ được báo tải lại trang, không tự ghi đè.
 - File đính kèm (hoá đơn, UNC) hiện chỉ lưu tên file, chưa tải lên Supabase Storage. Cần bổ sung nếu cần lưu file thật.
 - Dữ liệu mới bắt đầu trống, không có dữ liệu mẫu của bản prototype.
+
+## 5. Email báo người duyệt
+
+Khi đề xuất chi hoặc đợt chi tới lượt ai duyệt, hệ thống gửi email cho người đó (và người đang được uỷ quyền duyệt thay), có nút mở thẳng phiếu. Bật/tắt ở **Cấu hình → Thông báo**. Mỗi người dùng cần có email ở trang **Người dùng**.
+
+Việc gửi do hàm máy chủ `api/notify.js` (Vercel Function) làm. Cấu hình một lần ở **Vercel → Project → Settings → Environment Variables**, rồi **Redeploy**:
+
+| Biến | Giá trị |
+|---|---|
+| `MAIL_FROM` | `Xperise Spend Ops <spendops@xperise.com>` |
+| Cách 1, Resend: `RESEND_API_KEY` | API key từ resend.com (cần xác minh domain gửi) |
+| Cách 2, SMTP: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | Google Workspace: `smtp.gmail.com`, `465`, email gửi, App Password 16 ký tự |
+| `APP_URL` (tuỳ chọn) | `https://mlx-spendops.vercel.app` |
+
+Chưa cấu hình thì ứng dụng vẫn chạy bình thường, chỉ không gửi email. Người nhận và nội dung email do máy chủ tự tính từ dữ liệu đã lưu, client chỉ gửi mã phiếu.

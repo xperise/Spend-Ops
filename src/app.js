@@ -305,7 +305,7 @@ function submitReq(r, by, at){
   const chain = res.steps.map((s,i) => Object.assign({}, s, {decisions:{}, status: i===0 ? 'current' : 'waiting'}));
   const round = {no:r.rounds.length+1, at, cfgVersion:S.config.version, band:bandRange(res.band, res.rule), rule:ruleLabel(res.rule), chain};
   r.rounds.push(round);
-  r.status = 'pending'; r.submittedAt = at;
+  r.status = 'pending'; r.submittedAt = at; queueNotify('req', r.id);
   log(r, by, round.no > 1 ? `Gửi lại lần ${round.no} sau khi bổ sung` : 'Gửi đề xuất', at);
 }
 function act(r, by, kind, note, at, principal){
@@ -320,7 +320,7 @@ function act(r, by, kind, note, at, principal){
     if (done) {
       s.status = 'approved'; s.doneAt = at;
       const nx = rd.chain.find(x => x.status === 'waiting');
-      if (nx) nx.status = 'current';
+      if (nx) { nx.status = 'current'; queueNotify('req', r.id); }
       else { r.status = 'approved'; r.approvedAt = at; log(r, null, 'Đủ chữ ký, chuyển kế toán lập đợt chi', at); }
     }
   } else if (kind === 'reject') {
@@ -364,7 +364,7 @@ function createBatch(ids, by, at, payDate){
   const b = {id:uid('b'), code:nextCode('PB'), reqIds:[...ids], status:'review', createdBy:by, createdAt:at, payDate: payDate || localDate(at), approvedBy:null, approvedAt:null, approveNote:'', lines:{}, removed:[], log:[], chain:plan.steps, cfgVersion:S.config.version};
   ids.forEach(id => { b.lines[id] = {paidAt:null, paidBy:null, unc:[]}; const r = req(id); r.status = 'in_batch'; r.batchId = b.id; log(r, by, `Đưa vào đợt chi ${b.code}, hẹn thanh toán ${dOnly(b.payDate + 'T00:00')}`, at); });
   blog(b, by, `Lập đợt ${ids.length} khoản, hẹn thanh toán ${dOnly(b.payDate + 'T00:00')}`, at);
-  S.batches.push(b); return b;
+  S.batches.push(b); queueNotify('batch', b.id); return b;
 }
 function approveBatch(b, by, note, at, principal){
   at = at || now(); principal = principal || by;
@@ -376,7 +376,7 @@ function approveBatch(b, by, note, at, principal){
   if (!done) return;
   s.status = 'approved'; s.doneAt = at;
   const nx = b.chain.find(x => x.status === 'waiting');
-  if (nx) { nx.status = 'current'; return; }
+  if (nx) { nx.status = 'current'; queueNotify('batch', b.id); return; }
   b.status = 'approved'; b.approvedBy = by; b.approvedFor = principal !== by ? principal : null; b.approvedAt = at; b.approveNote = note || '';
   b.reqIds.forEach(id => log(req(id), by, `Duyệt đợt chi ${b.code}${who}`, at));
   blog(b, by, `Đủ chữ ký, chuyển kế toán chi tiền${who}`, at);
@@ -688,6 +688,7 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('change', e => {
   if (e.target.dataset.calscope) { UI.cal = UI.cal || {}; UI.cal.scope = e.target.value; renderMain(); }
+  if (e.target.dataset.notify && UI.draft) { const N = UI.draft.config.notify = UI.draft.config.notify || {email:true, batch:true}; N[e.target.dataset.notify] = e.target.checked; renderMain(); }
 });
 
 
@@ -1361,10 +1362,10 @@ function inConfig(id, C){ C = C || S.config; return C.rules.some(rl => rl.bands.
 function viewConfig(){
   if (!UI.draft) UI.draft = {config: clone(S.config)};
   const D = UI.draft; const admin = me().admin;
-  const tabs = [['request','Đề xuất chi'],['batch','Đợt chi']].concat(admin ? [['users','Người dùng']] : []);
+  const tabs = [['request','Đề xuất chi'],['batch','Đợt chi'],['notify','Thông báo']].concat(admin ? [['users','Người dùng']] : []);
   const tab = tabs.some(t => t[0] === UI.cfgTab) ? UI.cfgTab : 'request'; UI.cfgTab = tab;
-  const approval = tab === 'request' || tab === 'batch';
-  const body = tab === 'request' ? `${cfgMatrix(D)}${cfgRules(D)}` : tab === 'batch' ? cfgBatch(D) : viewUsers(true);
+  const approval = tab === 'request' || tab === 'batch' || tab === 'notify';
+  const body = tab === 'request' ? `${cfgMatrix(D)}${cfgRules(D)}` : tab === 'batch' ? cfgBatch(D) : tab === 'notify' ? cfgNotify(D) : viewUsers(true);
   return `${head('Quản trị','Cấu hình', admin ? `Đang áp dụng v${S.config.version}, cập nhật ${dt(S.config.updatedAt)} bởi ${esc(user(S.config.updatedBy)?.name||'—')}. Thay đổi phê duyệt chỉ áp cho đề xuất gửi sau khi lưu.` : 'Phần phê duyệt được phân quyền.')}
   <div class="tabs" role="tablist">${tabs.map(t => `<button role="tab" aria-selected="${tab===t[0]}" class="${tab===t[0]?'on':''}" data-cfgtab="${t[0]}">${t[1]}</button>`).join('')}</div>
   <div class="${approval ? 'g75' : ''}">
@@ -1519,6 +1520,17 @@ function cfgBatch(D){
       <label class="f" style="max-width:360px">Hiện trước ngày “Cần chi trước” (số ngày)<input class="in" type="number" min="0" max="365" step="1" inputmode="numeric" data-rule="leadDays" value="${B.leadDays == null ? '' : esc(B.leadDays)}" placeholder="Để trống: hiện ngay khi duyệt xong"></label></div>
     <p class="small faint" style="margin:0">Ví dụ đặt 3: khoản cần chi trước 20/12 chỉ hiện trong “Chờ thanh toán” của kế toán từ 17/12. Khoản không chọn ngày cần chi luôn hiện ngay. Kế toán vẫn bấm “Hiện để lập đợt sớm” được khi cần. Áp dụng cho mọi khoản ngay sau khi lưu.</p>
   </div></div>`;
+}
+function cfgNotify(D){
+  const N = D.config.notify = D.config.notify || {email:true, batch:true};
+  const noMail = activeUsers().filter(u => !u.email);
+  return `<p class="small muted" style="margin:0">Gửi email tới người duyệt khi có việc chờ họ: lúc đề xuất được gửi (hoặc gửi lại), khi đề xuất chuyển sang cấp duyệt tiếp theo, và tương tự với đợt chi. Người đang được uỷ quyền duyệt thay cũng nhận email. Email có nút mở thẳng phiếu cần duyệt.</p>
+  <div class="rule open"><div class="rule-e stack" style="border-top:0">
+    <label class="row" style="gap:10px;cursor:pointer"><input type="checkbox" class="cb" data-notify="email" ${N.email !== false ? 'checked' : ''}><span><b style="font-weight:500">Email báo đề xuất chi chờ duyệt</b><div class="small faint">Gửi cho người duyệt ở bước hiện tại chưa ra quyết định.</div></span></label>
+    <label class="row" style="gap:10px;cursor:pointer"><input type="checkbox" class="cb" data-notify="batch" ${N.batch !== false ? 'checked' : ''} ${N.email === false ? 'disabled' : ''}><span><b style="font-weight:500">Email báo đợt chi chờ duyệt</b><div class="small faint">Gửi cho người duyệt đợt chi ở cấp hiện tại.</div></span></label>
+  </div></div>
+  ${noMail.length ? `<div class="alert">Chưa có email nên sẽ không nhận được thông báo: ${esc(noMail.map(u => u.name).join(', '))}. Bổ sung ở trang Người dùng.</div>` : ''}
+  <p class="small faint" style="margin:0">Máy chủ gửi email cần được cấu hình một lần trên Vercel (MAIL_FROM và RESEND_API_KEY hoặc SMTP). Khi chưa cấu hình, ứng dụng vẫn chạy bình thường, chỉ không gửi email.</p>`;
 }
 function renameModal(kind, gi, ci){
   const cur = kind === 'cat' ? S.cats[gi][1][ci] : S.cats[gi][0];
@@ -2454,6 +2466,21 @@ document.addEventListener('submit', async e => {
 
 /* ===================== Lưu trữ và đăng nhập (Supabase) ===================== */
 let SESSION_EMAIL = null, STATE_VERSION = 0, saveTimer = null, pushing = false, dirty = false;
+/* Email báo người duyệt: xếp hàng khi có bước duyệt mới, chỉ gửi sau khi dữ liệu đã lưu lên máy chủ
+   (máy chủ /api/notify đọc lại dữ liệu đã lưu để tự tính người nhận). */
+let NOTIFY_Q = [];
+function queueNotify(kind, id){ if (!SB || !SESSION_EMAIL) return; if (!NOTIFY_Q.some(x => x.kind === kind && x.id === id)) NOTIFY_Q.push({kind, id}); }
+async function flushNotify(items){
+  if (!items.length || (S.config.notify && S.config.notify.email === false)) return;
+  try {
+    const { data: { session } } = await SB.auth.getSession(); if (!session) return;
+    const res = await fetch('/api/notify', {method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${session.access_token}`}, body: JSON.stringify({items})});
+    const j = await res.json().catch(() => ({}));
+    if (res.status === 503) { if (me() && (me().admin || me().cfg)) toast('Chưa gửi email báo người duyệt: chưa cấu hình email trên Vercel (xem README).'); return; }
+    if (j.sent && j.sent.length) toast(`Đã gửi email báo ${j.sent.length} người duyệt`);
+    if (j.failed && j.failed.length) toast(`Không gửi được email tới ${j.failed.map(x => x.to).join(', ')}`);
+  } catch (err) { console.warn('notify', err); }
+}
 const $root = () => document.getElementById('main');
 
 /* Trạng thái mới cho công ty: chỉ có cấu trúc mặc định, không có người dùng, NCC hay phiếu mẫu. */
@@ -2477,6 +2504,7 @@ function normalizeState(x){
   x.guideDone = x.guideDone || {}; x.fileNames = x.fileNames || {}; x.banks = x.banks || JSON.parse(JSON.stringify(BANK0)); x.users = x.users || []; x.vendors = x.vendors || []; x.reqs = x.reqs || [];
   x.batches = x.batches || []; x.delegations = x.delegations || []; x.userBanks = x.userBanks || {}; x.seq = x.seq || {A:0, PB:0};
   x.config.batch = x.config.batch || {bands:[{id:'bB1', max:null, levels:[{approvers:[], mode:'any'}]}]};
+  x.config.notify = Object.assign({email:true, batch:true}, x.config.notify || {});
   x.config.fallback = x.config.fallback || []; x.config.noInvoice = x.config.noInvoice || {on:true, approvers:[]};
   return x;
 }
@@ -2538,16 +2566,20 @@ async function boot(){
   if (!u.active) { renderNoAccess(); return; }
   S.me = u.id;
   render();
+  const qs = new URLSearchParams(location.search);   // link từ email: ?open=<mã phiếu> hoặc ?batch=<mã đợt>
+  if (qs.get('open') && req(qs.get('open'))) go('detail', qs.get('open'));
+  else if (qs.get('batch') && batch(qs.get('batch'))) go('batch', qs.get('batch'));
+  if (qs.get('open') || qs.get('batch')) history.replaceState(null, '', location.pathname);
   if (S.users.length === 1 && u.admin) toast('Đã tạo tài khoản quản trị đầu tiên. Thêm người dùng và kiểm tra cấu hình phê duyệt.');
 }
 
 /* Ghi lên Supabase có kiểm soát phiên bản: nếu có người khác vừa ghi, không ghi đè mà báo tải lại. */
 async function pushState(){
-  if (!S || !SB) return;
+  if (!S || !SB) return; let sending = [];
   if (pushing) { saveTimer = setTimeout(pushState, 500); return; }
   pushing = true;
   try {
-    const payload = JSON.parse(JSON.stringify(S));
+    const payload = JSON.parse(JSON.stringify(S)); sending = NOTIFY_Q.splice(0);
     const next = STATE_VERSION + 1;
     const { data, error } = await SB.from('app_state')
       .update({ data: payload, version: next, updated_at: new Date().toISOString() })
@@ -2556,8 +2588,9 @@ async function pushState(){
     if (!data || data.length === 0) {
       dirty = true;
       toast('Dữ liệu vừa được người khác cập nhật. Tải lại trang trước khi làm tiếp, để không ghi đè thay đổi của họ.');
-    } else { STATE_VERSION = data[0].version; dirty = false; }
+    } else { STATE_VERSION = data[0].version; dirty = false; flushNotify(sending); }
   } catch (err) {
+    NOTIFY_Q = sending.concat(NOTIFY_Q);
     toast('Chưa lưu được lên máy chủ, hệ thống sẽ thử lại.');
     saveTimer = setTimeout(pushState, 3000);
   } finally { pushing = false; }
