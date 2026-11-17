@@ -190,7 +190,7 @@ function seed(){
 
 /* ===================== Trạng thái ===================== */
 let S;
-let UI = {view:'home', id:null, listTab:'mine', cfgTab:'request', draft:null, sim:null, form:null, errors:{}, inboxSel:{}, batchSel:{}, payDraft:null, flt:{q:'',from:'',to:'',pm:'',cat:'',who:''}, bflt:{q:'',from:'',to:'',pm:''}, qflt:{pm:''}, rflt:{q:'',from:'',to:'',pm:'',cat:'',who:''}, cfgRule:null, vq:'', rtab:null, paySel:{}, bpm:''};
+let UI = {view:'home', id:null, listTab:'mine', cfgTab:'request', draft:null, sim:null, form:null, errors:{}, inboxSel:{}, batchSel:{}, payDraft:null, flt:{q:'',from:'',to:'',pm:'',cat:'',who:''}, bflt:{q:'',from:'',to:'',pm:''}, qflt:{pm:''}, rflt:{q:'',from:'',to:'',pm:'',cat:'',who:'',exCancel:true}, cfgRule:null, vq:'', rtab:null, paySel:{}, bpm:''};
 /* save(): ghi lên Supabase sau 0,4 giây không thao tác (xem khối Lưu trữ ở cuối file). */
 function save(){ if (!S || !SB) return; dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(pushState, 400); }
 
@@ -2240,11 +2240,14 @@ function advSummary(rs){
   };
 }
 function summaryData(){
-  const f = UI.rflt; const rs = visibleReqs().filter(r => r.status !== 'draft' && inRange(r.createdAt, f) && catMatch(r, f.cat) && (!f.who || r.requester === f.who));
+  const f = UI.rflt; const all = visibleReqs().filter(r => r.status !== 'draft' && inRange(r.createdAt, f) && catMatch(r, f.cat) && (!f.who || r.requester === f.who));
+  // Mặc định không tính khoản đã huỷ (cả số lệnh lẫn số tiền); bỏ tick “Không tính khoản đã huỷ” để tính cả.
+  const ex = f.exCancel !== false; const cancelled = all.filter(r => r.status === 'cancelled');
+  const rs = ex ? all.filter(r => r.status !== 'cancelled') : all;
   const grp = (keyFn) => { const m = {}; rs.forEach(r => { const k = keyFn(r); (m[k] = m[k] || {k, n:0, amt:0, paid:0}); m[k].n++; m[k].amt += r.amount; if (r.status === 'paid') m[k].paid += r.amount; }); return Object.values(m).sort((a,b) => b.amt - a.amt); };
   const done = rs.filter(r => r.approvedAt && r.submittedAt && !r.direct);
   const paid = rs.filter(r => r.status === 'paid');
-  return {rs, paid, adv: advSummary(rs),
+  return {rs, paid, adv: advSummary(rs), ex, cancelled:{n:cancelled.length, amt:cancelled.reduce((a,r)=>a+r.amount,0)},
     kpi:{made:rs.length, approved:rs.filter(r => r.approvedAt).length, paidN:paid.length, paidAmt:paid.reduce((a,r)=>a+r.amount,0), closed:rs.filter(r => ['rejected','cancelled'].includes(r.status)).length,
       avgH: done.length ? done.reduce((a,r) => a + (r.approvedAt - r.submittedAt), 0) / done.length / H : null, invWait: rs.filter(invPending).length, tax: paid.reduce((a,r) => { const s = linesSum(r.lines,'total'); return a + (s ? Math.round(linesSum(r.lines,'tax') * r.amount / s) : 0); }, 0)},
     tables:[
@@ -2269,9 +2272,9 @@ function viewReports(){
   const d = summaryData(); const k = d.kpi; const tot = d.rs.reduce((a,r)=>a+r.amount,0) || 1;
   const kp = (l,v,s) => `<div class="kpi static"><span class="l">${l}</span><span class="v">${v}</span><span class="s">${s}</span></div>`;
   return `${head('Theo dõi','Lịch sử và báo cáo','Số liệu tính trên các phiếu lập trong khoảng ngày đang lọc.')}${tabs}
-  ${filterBar('rflt', {cat:true, who:true, extra:`<span class="sp"></span><button class="btn sec sm" data-action="xsummary">Xuất Excel</button>`})}
+  ${filterBar('rflt', {cat:true, who:true, extra:`<label class="row" style="gap:6px;cursor:pointer;font-size:13px;white-space:nowrap"><input type="checkbox" class="cb" data-excancel="1" ${f.exCancel !== false ? 'checked' : ''}>Không tính khoản đã huỷ</label><span class="sp"></span><button class="btn sec sm" data-action="xsummary">Xuất Excel</button>`})}
   <div class="stack">
-    <div class="g4">${kp('Lệnh đã lập', k.made, `${short(tot === 1 && !d.rs.length ? 0 : d.rs.reduce((a,r)=>a+r.amount,0))} đề nghị`)}${kp('Đã duyệt xong', k.approved, k.avgH == null ? 'Chưa đủ dữ liệu thời gian duyệt' : `Duyệt trung bình ${k.avgH < 24 ? k.avgH.toFixed(1).replace('.',',') + ' giờ' : (k.avgH/24).toFixed(1).replace('.',',') + ' ngày'}`)}${kp('Đã chi', k.paidN, `${short(k.paidAmt)}, thuế ${short(k.tax)}`)}${kp('Từ chối, huỷ', k.closed, `${k.invWait} khoản chờ hoá đơn`)}</div>
+    <div class="g4">${kp('Lệnh đã lập', k.made, `${short(tot === 1 && !d.rs.length ? 0 : d.rs.reduce((a,r)=>a+r.amount,0))} đề nghị`)}${kp('Đã duyệt xong', k.approved, k.avgH == null ? 'Chưa đủ dữ liệu thời gian duyệt' : `Duyệt trung bình ${k.avgH < 24 ? k.avgH.toFixed(1).replace('.',',') + ' giờ' : (k.avgH/24).toFixed(1).replace('.',',') + ' ngày'}`)}${kp('Đã chi', k.paidN, `${short(k.paidAmt)}, thuế ${short(k.tax)}`)}${d.ex ? kp('Từ chối', k.closed, d.cancelled.n ? `Không tính ${d.cancelled.n} khoản huỷ (${short(d.cancelled.amt)})` : `${k.invWait} khoản chờ hoá đơn`) : kp('Từ chối, huỷ', k.closed, `${k.invWait} khoản chờ hoá đơn`)}</div>
     ${d.adv.n ? `<div class="card" style="margin-bottom:16px"><div class="ch"><h2 class="card-title">Tạm ứng và hoàn ứng</h2><span class="card-note">${d.adv.n} khoản tạm ứng trong kỳ</span></div>
       <div class="tw"><table><thead><tr><th>Chỉ tiêu</th><th class="r">Số khoản</th><th class="r">Số tiền (đ)</th></tr></thead><tbody>
         <tr><td>Đã tạm ứng (đã chi)</td><td class="r">${d.adv.paidN}</td><td class="r">${fmt(d.adv.amt)}</td></tr>
@@ -2340,12 +2343,13 @@ document.addEventListener('click', e => {
       {name:'Booking', rows: bookingRowsFor(bs.flatMap(x => x.reqIds))}, {name:'Chi tiet khoan', rows:[['Mã đợt','STT','Mã phiếu','Nội dung','Người thụ hưởng','Hình thức','Số tiền','Ngày chi','UNC']].concat(bs.flatMap(b => b.reqIds.map((id,i) => { const r = req(id), ln = b.lines[id]; return [b.code, i+1, r.code, r.title, payeeOf(r).name, PAYM[pmOf(r)], r.amount, ln.paidAt ? dt(ln.paidAt) : '', ln.unc.join(', ')]; })))}]); return; }
   if (a === 'xhistory') { exportXlsx(`Lich_su_thao_tac_${localDate()}.xlsx`, [{name:'Lich su', rows:[['STT','Thời gian','Mã','Người thực hiện','Thao tác','Phiếu, đợt','Số tiền']].concat(historyRows().map((x,i) => [i+1, dt(x.at), x.code, x.by ? user(x.by).name : 'Hệ thống', x.text, x.what, x.amt]))}]); return; }
   if (a === 'xsummary') { const d2 = summaryData(); const k = d2.kpi;
-    exportXlsx(`Bao_cao_tong_hop_${localDate()}.xlsx`, [{name:'Tong quan', rows:[['Chỉ tiêu','Giá trị'],['Từ ngày', UI.rflt.from || 'Tất cả'],['Đến ngày', UI.rflt.to || 'Tất cả'],['Lệnh đã lập', k.made],['Đã duyệt xong', k.approved],['Đã chi (số lệnh)', k.paidN],['Đã chi (số tiền)', k.paidAmt],['Trong đó thuế', k.tax],['Từ chối, huỷ', k.closed],['Chờ hoá đơn', k.invWait],['Thời gian duyệt trung bình (giờ)', k.avgH == null ? '' : Math.round(k.avgH*10)/10]]}]
+    exportXlsx(`Bao_cao_tong_hop_${localDate()}.xlsx`, [{name:'Tong quan', rows:[['Chỉ tiêu','Giá trị'],['Từ ngày', UI.rflt.from || 'Tất cả'],['Đến ngày', UI.rflt.to || 'Tất cả'],['Khoản đã huỷ', d2.ex ? `Không tính (${d2.cancelled.n} khoản, ${d2.cancelled.amt} đ)` : 'Có tính'],['Lệnh đã lập', k.made],['Đã duyệt xong', k.approved],['Đã chi (số lệnh)', k.paidN],['Đã chi (số tiền)', k.paidAmt],['Trong đó thuế', k.tax],[d2.ex ? 'Từ chối' : 'Từ chối, huỷ', k.closed],['Chờ hoá đơn', k.invWait],['Thời gian duyệt trung bình (giờ)', k.avgH == null ? '' : Math.round(k.avgH*10)/10]]}]
       .concat(d2.tables.map(([name, rows]) => ({name, rows:[['STT', name.replace('Theo ',''), 'Số lệnh','Đề nghị','Đã chi']].concat(rows.map((x,i) => [i+1, x.k, x.n, x.amt, x.paid]))})))
       .concat([{name:'Chi tiet phieu', rows:reqExportRows(d2.rs.map(r => r.id))}, {name:'Tam ung', rows:[['Mã phiếu','Nội dung','Người đề xuất','Phòng','Số đã tạm ứng','Hạn quyết toán','Trạng thái quyết toán','Số chi thực tế','Chênh lệch (chi thêm + / hoàn thừa -)','Hoàn thừa phải trả','Ngày nhận hoàn']].concat(d2.adv.rows.map(r => { const sp = r.settleLines ? linesSum(r.settleLines,'total') : 0; const rf = r.settle && r.settle.refund; return [r.code, r.title, user(r.requester).name, dept(r.dept).name, r.amount, r.settleDue ? dOnly(r.settleDue) : '', ADV_LABEL[advState(r)] || '', sp || '', sp ? sp - r.amount : '', rf ? rf.amount : '', rf && rf.receivedAt ? dt(rf.receivedAt) : '']; }))}, {name:'Tam ung theo nguoi', rows:advGroupRows(d2.adv.byPerson, 'Người đề xuất')}, {name:'Tam ung theo phong', rows:advGroupRows(d2.adv.byDept, 'Phòng')}])); return; }
 });
 document.addEventListener('change', async e => {
   const t = e.target; const d = t.dataset;
+  if (d.excancel) { UI.rflt.exCancel = t.checked; renderMain(); return; }
   if (d.flt && t.type !== 'search') { const [k, f] = d.flt.split('.'); UI[k][f] = t.value; if (k === 'qflt') UI.batchSel = {}; renderMain(); return; }
   if (d.fkind != null) { UI.form.files[+d.fkind].kind = t.value; return; }
   if (d.recat) { const r = req(d.recat); const old = r.cat; r.cat = t.value; log(r, S.me, `Phân loại lại hạng mục: ${old} → ${r.cat}`); save(); toast('Đã phân loại lại hạng mục'); renderMain(); return; }
