@@ -422,10 +422,10 @@ const noAccent = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').
 const bankText = s => noAccent(s).toUpperCase().replace(/[^A-Z0-9 .,\-\/]/g,' ').replace(/\s+/g,' ').trim();
 function payeeOf(r){
   if (r.payee.type === 'me') { const u = user(r.requester) || {name:'—'}; const ub = r.payee.acc ? r.payee : (S.userBanks[r.requester] || {});
-    return {name:u.name, accName:ub.accName || bankText(u.name), note:'Hoàn ứng', bank:ub.bank || '', acc:ub.acc || '', ok:!!(ub.bank && ub.acc)}; }
+    return {name:u.name, accName:ub.accName || bankText(u.name), note:'Hoàn ứng', bank:ub.bank || '', branch:ub.branch || '', acc:ub.acc || '', ok:!!(ub.bank && ub.acc)}; }
   if (r.payee.type === 'other') return {name:r.payee.name, accName:bankText(r.payee.accName || r.payee.name), note:'Hoàn tiền', bank:r.payee.bank, acc:r.payee.acc, ok:true};
   const v = vendor(r.payee.vendorId) || {};
-  return {name:v.name || '—', accName:v.accName || bankText(v.name || ''), note:'', bank:v.bank || '—', acc:v.acc || '—', tax:v.tax, ok:!!v.verified, vendorId:v.id};
+  return {name:v.name || '—', accName:v.accName || bankText(v.name || ''), note:'', bank:v.bank || '—', branch:v.branch || '', acc:v.acc || '—', tax:v.tax, ok:!!v.verified, vendorId:v.id};
 }
 /* Nội dung chuyển khoản chuẩn ngân hàng: IN HOA không dấu, "[Mã] MLX TT [nội dung] theo HD [số hoá đơn]". */
 function memoOf(r){
@@ -857,7 +857,7 @@ function linesTable(f){
 function vendorMatches(q){ q = noAccent(q || '').toLowerCase().trim(); if (!q) return [];
   return S.vendors.filter(x => !x.deleted && noAccent([x.name, x.tax, x.acc, x.accName, x.bank].join(' ')).toLowerCase().includes(q)); }
 function vendorResults(){ const q = UI.vq || ''; if (!q.trim()) return ''; const m = vendorMatches(q);
-  return m.length ? `<div class="vlist">${m.slice(0,6).map(x => `<button type="button" data-vpick="${x.id}"><b>${esc(x.name)}</b><span>${x.tax ? 'MST ' + esc(x.tax) + ' · ' : ''}${esc(x.bank)} ${esc(x.acc)}${x.verified ? '' : ' · chưa xác minh'}</span></button>`).join('')}${m.length > 6 ? `<div class="small faint" style="padding:6px 10px">Còn ${m.length-6} kết quả, gõ thêm để thu hẹp.</div>` : ''}</div>`
+  return m.length ? `<div class="vlist">${m.slice(0,6).map(x => `<button type="button" data-vpick="${x.id}"><b>${esc(x.name)}</b><span>${x.tax ? 'MST ' + esc(x.tax) + ' · ' : ''}${esc(bankFull(x.bank, x.branch))} ${esc(x.acc)}${x.verified ? '' : ' · chưa xác minh'}</span></button>`).join('')}${m.length > 6 ? `<div class="small faint" style="padding:6px 10px">Còn ${m.length-6} kết quả, gõ thêm để thu hẹp.</div>` : ''}</div>`
     : `<div class="small faint" style="padding:6px 2px">Không tìm thấy “${esc(q)}”. Bấm “NCC mới” để thêm.</div>`; }
 function amountHint(f){ const sum = linesSum(f.lines,'total');
   if (f.type === 'refund') return f.amount ? short(f.amount) : '';
@@ -903,7 +903,7 @@ function viewForm(){
           </div></div>
         ${f.payeeType==='vendor'
           ? `<div class="f full"><span class="flabel">Nhà cung cấp</span><input type="hidden" name="vendorId" value="${esc(f.vendorId)}">
-              ${v ? `<div class="vsel"><div><b>${esc(v.name)}</b><div class="small faint">${v.tax ? 'MST ' + esc(v.tax) + ' · ' : ''}${esc(v.bank)} ${esc(v.acc)} · ${esc(v.accName || '')}</div></div>${v.verified ? '<span class="pill st-approved">STK đã xác minh</span>' : '<span class="pill st-returned">STK chưa xác minh</span>'}</div>` : ''}
+              ${v ? `<div class="vsel"><div><b>${esc(v.name)}</b><div class="small faint">${v.tax ? 'MST ' + esc(v.tax) + ' · ' : ''}${esc(bankFull(v.bank, v.branch))} ${esc(v.acc)} · ${esc(v.accName || '')}</div></div>${v.verified ? '<span class="pill st-approved">STK đã xác minh</span>' : '<span class="pill st-returned">STK chưa xác minh</span>'}</div>` : ''}
               <div class="row" style="flex-wrap:nowrap"><input class="in" type="search" data-vq placeholder="Tìm nhà cung cấp khác theo tên, MST hoặc số tài khoản" value="${esc(UI.vq||'')}" autocomplete="off" aria-label="Tìm nhà cung cấp"><button type="button" class="btn sec" data-action="newvendor">${icon('plus',16)} NCC mới</button></div>
               <div id="vres">${vendorResults()}</div>${v && !v.verified ? '<span class="hint">STK chưa xác minh: vẫn gửi duyệt được, kế toán xác minh trước khi đưa vào đợt chi.</span>' : ''}</div>`
           : `${meBankCard(E)}<label class="f full">Tôi đã trả bằng<select class="in ${E.outlay?'err':''}" name="outlay">${Object.entries(OUTLAY).map(([k,x]) => `<option value="${k}" ${f.outlay===k?'selected':''}>${x}</option>`).join('')}</select>${E.outlay?`<span class="ferr">${E.outlay}</span>`:''}</label>`}
@@ -1140,7 +1140,7 @@ function viewDetail(){
       <div class="card"><div class="ch"><h2 class="card-title">Thông tin chi</h2><div class="row">${more.join('')}</div></div>
         <div class="kv">
           <div><span>Thanh toán cho</span><b>${esc(p.name)}${p.note?` <span class="faint">(${p.note})</span>`:''}</b>${p.tax?`<div class="small faint">MST ${esc(p.tax)}</div>`:''}</div>
-          <div><span>Tài khoản nhận</span><b>${esc(p.bank+' '+p.acc)}</b>${r.payee.type==='vendor'&&!p.ok?'<div class="small" style="color:var(--watch)">STK chưa xác minh</div>':`<div class="small faint">${esc(p.accName)}</div>`}</div>
+          <div><span>Tài khoản nhận</span><b>${esc(p.bank+' '+p.acc)}</b>${p.branch ? `<div class="small faint">Chi nhánh: ${esc(p.branch)}</div>` : ''}${r.payee.type==='vendor'&&!p.ok?'<div class="small" style="color:var(--watch)">STK chưa xác minh</div>':`<div class="small faint">${esc(p.accName)}</div>`}</div>
           <div><span>Hình thức thanh toán</span><b>${PAYM[pmOf(r)]}</b>${r.payee.type==='me'?`<div class="small faint">Đã ứng bằng ${OUTLAY[r.payee.outlay||'transfer'].toLowerCase()}</div>`:''}</div>
           <div><span>Hạng mục chi phí</span>${u.acct && r.type !== 'refund' && r.status !== 'cancelled' ? `<select class="in" style="height:32px;margin-top:2px" data-recat="${r.id}" aria-label="Phân loại lại hạng mục">${catOptions(r.cat)}</select>` : `<b>${esc(r.cat)}</b>`}<div class="small faint">${esc(catGroup(r.cat))}</div></div>
           <div><span>Chứng từ</span><b>${r.type==='refund' ? 'Sao kê' : EVIDENCE[r.evidence][0]}</b></div>
@@ -1242,7 +1242,7 @@ function viewBatch(){
       ${transferring ? `<td>${ln.paidAt || pm !== 'transfer' ? '' : `<input type="checkbox" class="cb" aria-label="Chọn ${esc(r.code)}" data-psel="${id}" ${UI.paySel[id]?'checked':''}>`}</td>` : ''}
       <td class="r faint">${i+1}</td>
       <td style="min-width:210px"><div class="ttl">${esc(p.accName)}</div><div class="small faint"><button class="linkbtn" data-open="${r.id}">${esc(r.code)}</button> ${esc(r.title)}${r.direct?' · lập trực tiếp':''}</div></td>
-      <td class="small" style="white-space:nowrap">${esc(p.bank)}<div class="num">${esc(p.acc)}${transferring && pm === 'transfer' ? copyBtn(p.acc,'số tài khoản') : ''}</div><div class="faint">${PAYM[pm]}</div></td>
+      <td class="small" style="white-space:nowrap">${esc(p.bank)}${p.branch ? `<div class="faint" style="white-space:normal">${esc(p.branch)}</div>` : ''}<div class="num">${esc(p.acc)}${transferring && pm === 'transfer' ? copyBtn(p.acc,'số tài khoản') : ''}</div><div class="faint">${PAYM[pm]}</div></td>
       <td class="r" style="white-space:nowrap">${fmt(r.amount)}${transferring && pm === 'transfer' ? copyBtn(String(r.amount),'số tiền') : ''}</td>
       <td class="small muted" style="min-width:200px;max-width:300px">${pm === 'transfer' ? esc(memo) + (transferring ? copyBtn(memo,'nội dung chuyển khoản') : '') : '<span class="faint">Không chuyển khoản</span>'}</td>
       <td>${ln.paidAt ? `<div class="paid-mark">Đã chi ${dt(ln.paidAt)}</div><div class="chips" style="margin-top:4px">${fileChips(ln.unc, true, r)}</div>`
@@ -1334,7 +1334,7 @@ function drawPayModal(){
   const mapTable = multi && P.mode === 'each' && P.files.length ? `
     <div class="tw"><table><thead><tr><th>Khoản</th><th class="r">Số tiền (đ)</th><th>UNC</th></tr></thead><tbody>
     ${P.ids.map(id => { const r = req(id); const p = payeeOf(r); const i = P.map[id];
-      return `<tr><td><div class="ttl">${esc(p.name)}</div><div class="small faint">${esc(r.code)} · ${esc(p.bank)} ${esc(p.acc)}</div></td>
+      return `<tr><td><div class="ttl">${esc(p.name)}</div><div class="small faint">${esc(r.code)} · ${esc(bankFull(p.bank, p.branch))} ${esc(p.acc)}</div></td>
         <td class="r" style="white-space:nowrap">${fmt(r.amount)}</td>
         <td style="min-width:220px"><select class="in ${i==null?'err':''}" style="height:34px" data-umap="${id}" aria-label="UNC cho ${esc(r.code)}"><option value="">Chọn file UNC</option>${P.files.map((f,fi) => `<option value="${fi}" ${fi===i?'selected':''}>${esc(f)}</option>`).join('')}</select>
           <div class="small ${i==null?'':'faint'}" style="margin-top:3px;${i==null?'color:var(--critical)':''}">${i==null ? (P.ambig && P.ambig[id] ? `Nhiều file cùng khớp theo ${P.ambig[id]}, chọn thủ công` : 'Chưa gán') : P.why[id] ? 'Tự khớp theo ' + P.why[id] : 'Chọn thủ công'}${i!=null && count[i] > 1 ? ` · file này dùng cho ${count[i]} khoản` : ''}</div></td></tr>`; }).join('')}
@@ -1529,10 +1529,10 @@ function renameModal(kind, gi, ci){
     <div class="modal-f"><button type="button" class="btn sec" data-close="1">Huỷ</button><button type="submit" class="btn pri">Lưu</button></div></form>`, 460);
 }
 const BANKS = ['Vietcombank','BIDV','VietinBank','Agribank','Techcombank','MB Bank','ACB','VPBank','TPBank','Sacombank','HDBank','VIB','SHB','MSB','OCB','SeABank','LPBank','Eximbank','Nam A Bank','Bắc Á Bank','Kienlongbank','Saigonbank'];
-const bankSnap = id => { const b = (S.userBanks || {})[id]; return b && b.acc ? {bank:b.bank, acc:b.acc, accName:b.accName} : {}; };
+const bankSnap = id => { const b = (S.userBanks || {})[id]; return b && b.acc ? {bank:b.bank, branch:b.branch || '', acc:b.acc, accName:b.accName} : {}; };
 function meBankCard(E){
   const b = bankSnap(S.me);
-  return b.acc ? `<div class="f full"><span class="flabel">Tài khoản nhận hoàn ứng</span><div class="vsel"><div><b>${esc(b.accName || '')}</b><div class="small faint">${esc(b.bank)} · ${esc(b.acc)}</div></div><button type="button" class="btn ghost sm" data-bankedit="1">Đổi tài khoản</button></div><span class="hint">Tự điền từ Tài khoản cá nhân. Dò lại trước khi gửi.</span></div>`
+  return b.acc ? `<div class="f full"><span class="flabel">Tài khoản nhận hoàn ứng</span><div class="vsel"><div><b>${esc(b.accName || '')}</b><div class="small faint">${esc(bankFull(b.bank, b.branch))} · ${esc(b.acc)}</div></div><button type="button" class="btn ghost sm" data-bankedit="1">Đổi tài khoản</button></div><span class="hint">Tự điền từ Tài khoản cá nhân. Dò lại trước khi gửi.</span></div>`
     : `<div class="f full"><span class="flabel">Tài khoản nhận hoàn ứng</span><div class="alert neg">${E.payee ? esc(E.payee) : 'Chưa có tài khoản cá nhân.'} <button type="button" class="btn sec sm" data-bankedit="1">Nhập tài khoản</button></div></div>`;
 }
 function bankModal(){
@@ -1541,8 +1541,9 @@ function bankModal(){
     <div class="modal-h"><h3 id="bkh">Tài khoản cá nhân</h3><p>Tài khoản nhận tiền khi bạn chọn “Hoàn ứng cho tôi”. Kiểm tra kỹ số tài khoản trước khi lưu.</p></div>
     <div class="modal-b"><div class="fgrid">
       <label class="f">Ngân hàng${bankSelect(b.bank)}<span class="hint" data-bankcode>${esc(bankCodeText(b.bank))}</span></label>
+      <label class="f">Chi nhánh<input class="in" name="branch" maxlength="300" value="${esc(b.branch || '')}" autocomplete="off" placeholder="Tuỳ chọn"></label>
       <label class="f">Số tài khoản<input class="in" name="acc" inputmode="numeric" value="${esc(b.acc || '')}" autocomplete="off"></label>
-      <label class="f full">Tên chủ tài khoản<input class="in" name="accName" value="${esc(b.accName || '')}" autocomplete="off" placeholder="NGUYEN VAN A"><span class="hint">Viết IN HOA, không dấu, đúng như trên ngân hàng.</span></label>
+      <label class="f">Tên chủ tài khoản<input class="in" name="accName" value="${esc(b.accName || '')}" autocomplete="off" placeholder="NGUYEN VAN A"><span class="hint">Viết IN HOA, không dấu, đúng như trên ngân hàng.</span></label>
     </div><div id="mErr" style="margin-top:12px"></div></div>
     <div class="modal-f"><button type="button" class="btn sec" data-close="1">Huỷ</button><button type="submit" class="btn pri">Lưu tài khoản</button></div></form>`, 520);
 }
@@ -1550,7 +1551,7 @@ function viewProfile(){
   const b = bankSnap(S.me);
   return `${head('Cá nhân', 'Tài khoản cá nhân', 'Tài khoản nhận tiền khi bạn chọn “Hoàn ứng cho tôi” trong đề xuất chi.')}
   <div class="card" style="max-width:620px"><div class="ch"><h2 class="card-title">Tài khoản nhận tiền</h2>${b.acc ? '<span class="pill st-approved">Đã có</span>' : '<span class="pill st-returned">Chưa có</span>'}</div>
-    ${b.acc ? `<div class="kv"><div><span>Ngân hàng</span><b>${esc(b.bank)}</b></div><div><span>Số tài khoản</span><b class="num">${esc(b.acc)}</b></div><div><span>Tên chủ tài khoản</span><b>${esc(b.accName)}</b></div></div>` : '<p class="muted" style="margin:0">Bạn chưa nhập tài khoản. Nhập một lần, các lần hoàn ứng sau sẽ tự điền vào đề xuất.</p>'}
+    ${b.acc ? `<div class="kv"><div><span>Ngân hàng</span><b>${esc(b.bank)}</b>${b.branch ? `<div class="small faint">CN: ${esc(b.branch)}</div>` : ''}</div><div><span>Số tài khoản</span><b class="num">${esc(b.acc)}</b></div><div><span>Tên chủ tài khoản</span><b>${esc(b.accName)}</b></div></div>` : '<p class="muted" style="margin:0">Bạn chưa nhập tài khoản. Nhập một lần, các lần hoàn ứng sau sẽ tự điền vào đề xuất.</p>'}
     <div class="row" style="margin-top:14px"><button class="btn pri" data-bankedit="1">${b.acc ? 'Sửa tài khoản' : 'Nhập tài khoản'}</button></div>
     <p class="small faint" style="margin:12px 0 0">Đề xuất đã gửi giữ tài khoản lúc gửi. Đổi tài khoản chỉ áp dụng cho đề xuất gửi sau này.</p></div>`;
 }
@@ -1572,7 +1573,7 @@ function vendorsDirHtml(){
     <div class="row" style="margin-bottom:12px"><input class="in" type="search" data-vdq value="${esc(UI.vdq || '')}" placeholder="Tìm theo tên, MST, số tài khoản" autocomplete="off" aria-label="Tìm NCC" style="flex:1 1 260px;min-width:220px;max-width:380px">
       <span class="small faint">${list.length} NCC${unv ? `, ${unv} STK chưa xác minh` : ''}</span><span class="sp"></span><button class="btn ghost sm" data-vtemplate="1">${icon('download',14)} Tải file mẫu</button><button class="btn sec sm" data-vexport="1">${icon('download',14)} Xuất danh bạ</button><label class="btn sec sm" style="position:relative">${icon('upload',14)} Nhập từ file<input type="file" accept=".xlsx,.xls,.csv" data-vimport style="position:absolute;opacity:0;width:1px;height:1px"></label><button class="btn pri sm" data-vnew="1">${icon('plus',14)} Thêm NCC</button></div>
     <div class="tw"><table class="vdir"><thead><tr><th>Tên NCC / người nhận</th><th>MST</th><th>Ngân hàng</th><th>Số tài khoản</th><th>Trạng thái</th><th class="r">Số phiếu</th><th class="r">Đã chi (đ)</th><th></th></tr></thead><tbody>
-      ${list.map(v => { const st = vendorStats(v); return `<tr class="click" data-vview="${v.id}" tabindex="0"><td><div class="ttl">${esc(v.name)}</div><div class="small faint">${esc(v.accName || '')}</div></td><td class="small num">${esc(v.tax || '—')}</td><td class="small">${esc(v.bank)}</td><td class="small num">${esc(v.acc)}</td><td>${v.verified ? '<span class="pill st-approved">Đã xác minh</span>' : '<span class="pill st-returned">Chưa xác minh</span>'}</td><td class="r">${st.n}</td><td class="r">${fmt(st.paidAmt)}</td><td class="act">${!v.verified && me().acct ? `<button class="btn ghost sm" data-verify="${v.id}">Xác minh</button>` : ''}<button class="btn ghost sm" data-vedit="${v.id}">Sửa</button><button class="btn ghost sm" data-vdel="${v.id}" style="color:var(--critical)">Xoá</button></td></tr>`; }).join('') || '<tr><td colspan="8" class="small faint" style="text-align:center;padding:20px">Không có NCC nào khớp.</td></tr>'}
+      ${list.map(v => { const st = vendorStats(v); return `<tr class="click" data-vview="${v.id}" tabindex="0"><td><div class="ttl">${esc(v.name)}</div><div class="small faint">${esc(v.accName || '')}</div></td><td class="small num">${esc(v.tax || '—')}</td><td class="small">${esc(v.bank)}${v.branch ? `<div class="faint">${esc(v.branch)}</div>` : ''}</td><td class="small num">${esc(v.acc)}</td><td>${v.verified ? '<span class="pill st-approved">Đã xác minh</span>' : '<span class="pill st-returned">Chưa xác minh</span>'}</td><td class="r">${st.n}</td><td class="r">${fmt(st.paidAmt)}</td><td class="act">${!v.verified && me().acct ? `<button class="btn ghost sm" data-verify="${v.id}">Xác minh</button>` : ''}<button class="btn ghost sm" data-vedit="${v.id}">Sửa</button><button class="btn ghost sm" data-vdel="${v.id}" style="color:var(--critical)">Xoá</button></td></tr>`; }).join('') || '<tr><td colspan="8" class="small faint" style="text-align:center;padding:20px">Không có NCC nào khớp.</td></tr>'}
     </tbody></table></div>
     <p class="small faint" style="margin:10px 0 0">NCC thêm ở đề xuất chi hoặc khoản chi trực tiếp đều lưu ở đây, và ngược lại. Đổi số tài khoản sẽ đưa NCC về trạng thái chưa xác minh.</p></div>`;
 }
@@ -1582,7 +1583,7 @@ function vendorDetailModal(id){
   modal(`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="vdh" style="width:min(640px,100%)">
     <div class="modal-h"><h3 id="vdh">${esc(v.name)}</h3><p>${v.verified ? 'STK đã xác minh' : 'STK chưa xác minh'}${v.tax ? ` · MST ${esc(v.tax)}` : ''}</p></div>
     <div class="modal-b stack">
-      <div class="kv"><div><span>Ngân hàng</span><b>${esc(v.bank)}</b></div><div><span>Số tài khoản</span><b class="num">${esc(v.acc)}</b></div><div><span>Tên tài khoản</span><b>${esc(v.accName || '—')}</b></div></div>
+      <div class="kv"><div><span>Ngân hàng</span><b>${esc(v.bank)}</b></div><div><span>Chi nhánh</span><b>${esc(v.branch || '—')}</b></div><div><span>Số tài khoản</span><b class="num">${esc(v.acc)}</b></div><div><span>Tên tài khoản</span><b>${esc(v.accName || '—')}</b></div></div>
       <div class="kv"><div><span>Số phiếu</span><b>${st.n}</b></div><div><span>Đã chi</span><b>${money(st.paidAmt)}</b></div><div><span>Chi gần nhất</span><b>${st.last ? dOnly(st.last) : '—'}</b></div></div>
       ${rs.length ? `<div class="tw"><table><thead><tr><th>Mã</th><th>Nội dung</th><th class="r">Số tiền (đ)</th><th>Trạng thái</th></tr></thead><tbody>${rs.map(r => `<tr><td class="code">${esc(r.code || 'Nháp')}</td><td class="small">${esc(r.title)}</td><td class="r">${fmt(r.amount)}</td><td>${pill(r.status)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small faint" style="margin:0">Chưa có phiếu nào gửi tới NCC này.</p>'}
     </div>
@@ -1654,23 +1655,23 @@ function submitSettle(adv, rows, files, by){
 function refundReceived(r){ r.settle.refund.status = 'received'; r.settle.refund.receivedAt = now(); log(r, S.me, `Đã nhận hoàn ứng ${fmt(r.settle.refund.amount)} đ`); }
 
 /* ===================== Danh bạ NCC: file mẫu, xuất, nhập ===================== */
-const VCOLS = ['Mã NCC (để trống nếu thêm mới)','Tên NCC / người nhận','Mã số thuế','Ngân hàng','Số tài khoản','Tên tài khoản (IN HOA, không dấu)','Ghi chú'];
+const VCOLS = ['Mã NCC (để trống nếu thêm mới)','Tên NCC / người nhận','Mã số thuế','Ngân hàng','Chi nhánh','Số tài khoản','Tên tài khoản (IN HOA, không dấu)','Ghi chú'];
 function vendorTemplate(){
   exportXlsx('Mau_nhap_danh_ba_NCC.xlsx', [
-    {name:'Mau NCC', rows:[VCOLS, ['', 'VÍ DỤ, XOÁ DÒNG NÀY: Công ty TNHH Ví Dụ', '0101234567', 'Vietcombank', '0011223344', 'CONG TY TNHH VI DU', 'Ghi chú tuỳ chọn']]},
+    {name:'Mau NCC', rows:[VCOLS, ['', 'VÍ DỤ, XOÁ DÒNG NÀY: Công ty TNHH Ví Dụ', '0101234567', 'Vietcombank', 'Chi nhánh Sài Gòn', '0011223344', 'CONG TY TNHH VI DU', 'Ghi chú tuỳ chọn']]},
     {name:'Huong dan', rows:[['Hướng dẫn nhập danh bạ NCC / người nhận'], [''],
       ['1. Điền dữ liệu từ dòng 2 trở đi trong sheet “Mau NCC”. Xoá dòng ví dụ trước khi nhập.'],
       ['2. Mã NCC: để trống để thêm mới. Điền mã có sẵn (lấy từ file xuất) để cập nhật đúng NCC đó.'],
       ['3. Không có mã: hệ thống khớp theo Ngân hàng + Số tài khoản. Khớp thì cập nhật, không khớp thì thêm mới.'],
       ['4. Số tài khoản: số và chữ, không dấu cách. Nên định dạng cột là Văn bản để không mất số 0 đầu.'],
-      ['5. Tên tài khoản: IN HOA không dấu, đúng như trên ngân hàng.'],
+      ['5. Tên tài khoản: IN HOA không dấu, đúng như trên ngân hàng. Chi nhánh: tuỳ chọn, ghi tự do.'],
       ['6. NCC nhập từ file luôn ở trạng thái chưa xác minh. Kế toán xác minh trước khi đưa vào đợt chi.'],
       ['7. Dòng lỗi được báo trước khi nhập. Các dòng hợp lệ vẫn nhập được.']]}
   ]);
 }
 function vendorExport(){
   const list = S.vendors.filter(v => !v.deleted);
-  exportXlsx(`Danh_ba_NCC_${localDate()}.xlsx`, [{name:'Danh ba NCC', rows:[VCOLS.slice(0,6).concat(['Đã xác minh','Số phiếu','Đã chi (đ)'])].concat(list.map(v => { const st = vendorStats(v); return [v.id, v.name, v.tax || '', v.bank, v.acc, v.accName || '', v.verified ? 'Có' : 'Không', st.n, st.paidAmt]; }))}]);
+  exportXlsx(`Danh_ba_NCC_${localDate()}.xlsx`, [{name:'Danh ba NCC', rows:[VCOLS.slice(0,7).concat(['Đã xác minh','Số phiếu','Đã chi (đ)'])].concat(list.map(v => { const st = vendorStats(v); return [v.id, v.name, v.tax || '', v.bank, v.branch || '', v.acc, v.accName || '', v.verified ? 'Có' : 'Không', st.n, st.paidAmt]; }))}]);
 }
 function vendorRowCheck(v, selfId){
   if (v.name.length < 3) return 'Tên NCC thiếu hoặc quá ngắn';
@@ -1679,6 +1680,7 @@ function vendorRowCheck(v, selfId){
   if (!v.acc) return 'Thiếu số tài khoản';
   if (!/^[0-9A-Z]{4,24}$/.test(v.acc)) return 'Số tài khoản không hợp lệ (4 đến 24 ký tự số hoặc chữ)';
   if (!v.accName) return 'Thiếu tên tài khoản';
+  if (v.branch && v.branch.length > BRANCH_MAX) return `Chi nhánh tối đa ${BRANCH_MAX} ký tự`;
   if (v.tax && !/^\d{10}(-?\d{3})?$/.test(v.tax)) return 'Mã số thuế không hợp lệ';
   if (S.vendors.some(x => !x.deleted && x.id !== selfId && x.acc === v.acc && x.bank.toLowerCase() === v.bank.toLowerCase())) return 'Số tài khoản đã có trong danh bạ';
   return null;
@@ -1690,7 +1692,7 @@ function parseVendorRows(wb){
   if (hi < 0) return {error:'Không thấy dòng tiêu đề có cột “Tên NCC”. Hãy dùng file mẫu của hệ thống.'};
   const head = rows[hi].map(c => noAccent(String(c)).toLowerCase().trim());
   const col = re => head.findIndex(h => re.test(h));
-  const C = {id:col(/^ma ncc/), name:col(/^ten ncc/), tax:col(/ma so thue/), bank:col(/ngan hang/), acc:col(/so tai khoan/), accName:col(/ten tai khoan/)};
+  const C = {id:col(/^ma ncc/), name:col(/^ten ncc/), tax:col(/ma so thue/), bank:head.findIndex(h => /ngan hang/.test(h) && !/chi nhanh/.test(h)), branch:col(/chi nhanh/), acc:col(/so tai khoan/), accName:col(/ten tai khoan/)};
   if (['name','bank','acc','accName'].some(k => C[k] < 0)) return {error:'File thiếu cột bắt buộc: Tên NCC, Ngân hàng, Số tài khoản, Tên tài khoản.'};
   const out = []; const seen = new Set();
   for (let i = hi + 1; i < rows.length; i++) {
@@ -1699,6 +1701,7 @@ function parseVendorRows(wb){
     const line = i + 1;
     if (/^vi du/i.test(noAccent(name))) { out.push({line, name, action:'skip', msg:'dòng ví dụ'}); continue; }
     const v = {name, tax:get('tax').replace(/\s/g,''), bank:(bankByName(get('bank')) || {name:get('bank')}).name, acc:get('acc').replace(/\s/g,'').toUpperCase(), accName:bankText(get('accName'))};
+    if (C.branch >= 0) v.branch = get('branch');
     const id = get('id');
     const existing = id ? S.vendors.find(x => x.id === id && !x.deleted) : S.vendors.find(x => !x.deleted && x.acc === v.acc && x.bank.toLowerCase() === v.bank.toLowerCase());
     if (id && !existing) { out.push({line, name, action:'error', msg:`Mã NCC ${id} không có trong danh bạ`}); continue; }
@@ -2108,16 +2111,17 @@ function askReason(title, body, yes, fn){
     <div class="modal-f"><button type="button" class="btn sec" data-close="1">Giữ nguyên</button><button type="submit" class="btn danger">${esc(yes)}</button></div></form>`, 460);
 }
 function vendorModal(id, o){
-  o = o || {ctx:'form'}; const v = (id && vendor(id)) || {name:'', tax:'', bank:'', acc:'', accName:''};
+  o = o || {ctx:'form'}; const v = (id && vendor(id)) || {name:'', tax:'', bank:'', branch:'', acc:'', accName:''};
   UI.vctx = {id: id || null, ctx: o.ctx || 'form'};
   modal(`<form class="modal" id="vendorForm" role="dialog" aria-modal="true" aria-labelledby="vh" novalidate>
     <div class="modal-h"><h3 id="vh">${id ? 'Sửa nhà cung cấp' : 'Thêm nhà cung cấp'}</h3><p>${id ? 'Đổi ngân hàng, số hoặc tên tài khoản sẽ đưa NCC về trạng thái chưa xác minh.' : 'STK mới ở trạng thái chưa xác minh cho tới khi kế toán kiểm tra.'}</p></div>
     <div class="modal-b"><div class="fgrid">
       <label class="f full">Tên nhà cung cấp<input class="in" name="name" autocomplete="off" value="${esc(v.name)}"></label>
-      <label class="f">Mã số thuế<input class="in" name="tax" autocomplete="off" inputmode="numeric" value="${esc(v.tax || '')}"></label>
       <label class="f">Ngân hàng${bankSelect(v.bank)}<span class="hint" data-bankcode>${esc(bankCodeText(v.bank))}</span></label>
+      <label class="f">Chi nhánh<input class="in" name="branch" autocomplete="off" maxlength="300" placeholder="VD: Chi nhánh Sài Gòn (tuỳ chọn)" value="${esc(v.branch || '')}"></label>
       <label class="f">Số tài khoản<input class="in" name="acc" autocomplete="off" data-acc value="${esc(v.acc || '')}"><span class="hint">Số và chữ, không dấu cách.</span></label>
       <label class="f">Tên tài khoản<input class="in" name="accName" autocomplete="off" placeholder="IN HOA KHONG DAU" data-upper value="${esc(v.accName || '')}"></label>
+      <label class="f">Mã số thuế<input class="in" name="tax" autocomplete="off" inputmode="numeric" value="${esc(v.tax || '')}"></label>
     </div><div id="mErr" style="margin-top:12px"></div></div>
     <div class="modal-f"><button type="button" class="btn sec" data-close="1">Huỷ</button><button type="submit" class="btn pri">${id ? 'Lưu thay đổi' : 'Thêm nhà cung cấp'}</button></div></form>`, 560);
 }
@@ -2129,7 +2133,7 @@ function directModal(pre){
       <label class="f full">Nội dung chi<input class="in" name="title" value="${esc(pre.title || '')}" autocomplete="off" placeholder="VD: Phí duy trì tài khoản tháng 11"></label>
       <div class="f full"><span class="flabel">Nhà cung cấp</span>
         <div class="row" style="flex-wrap:nowrap"><input class="in" type="search" data-vfilter placeholder="Tìm theo tên, MST hoặc số tài khoản" autocomplete="off" style="flex:1"><button type="button" class="btn sec" data-action="dnewvendor">${icon('plus',16)} NCC mới</button></div>
-        <select class="in" name="vendorId" style="margin-top:6px">${act.map(x => `<option value="${x.id}" ${x.id === pre.vendorId ? 'selected' : ''}>${esc(x.name)} — ${esc(x.bank)} ${esc(x.acc)}${x.verified ? '' : ' (chưa xác minh)'}</option>`).join('')}</select></div>
+        <select class="in" name="vendorId" style="margin-top:6px">${act.map(x => `<option value="${x.id}" ${x.id === pre.vendorId ? 'selected' : ''}>${esc(x.name)} — ${esc(bankFull(x.bank, x.branch))} ${esc(x.acc)}${x.verified ? '' : ' (chưa xác minh)'}</option>`).join('')}</select></div>
       <label class="f">Hạng mục chi phí<select class="in" name="cat">${catOptions(pre.cat || '')}</select></label>
       <label class="f">Phòng chịu chi phí<select class="in" name="dept">${S.depts.map(d => `<option value="${d.id}" ${d.id === (pre.dept || me().dept) ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></label>
       <label class="f">Thành tiền, gồm VAT<div class="money"><input class="in" name="total" inputmode="numeric" data-money autocomplete="off" value="${esc(pre.total || '')}"><span>đ</span></div></label>
@@ -2355,7 +2359,7 @@ document.addEventListener('input', e => {
   if (d.vq != null) { UI.vq = t.value; const box = $('#vres'); if (box) box.innerHTML = vendorResults(); }
   if (d.vdq != null) { UI.vdq = t.value; renderMain(); refocus('[data-vdq]'); return; }
   if (d.vfilter != null) { const sel = t.closest('form').querySelector('[name=vendorId]'); const m = t.value.trim() ? vendorMatches(t.value) : S.vendors.filter(x => !x.deleted);
-    sel.innerHTML = m.length ? m.map(x => `<option value="${x.id}">${esc(x.name)} — ${esc(x.bank)} ${esc(x.acc)}${x.verified?'':' (chưa xác minh)'}</option>`).join('') : '<option value="">Không tìm thấy</option>'; }
+    sel.innerHTML = m.length ? m.map(x => `<option value="${x.id}">${esc(x.name)} — ${esc(bankFull(x.bank, x.branch))} ${esc(x.acc)}${x.verified?'':' (chưa xác minh)'}</option>`).join('') : '<option value="">Không tìm thấy</option>'; }
   if (d.flt && t.type === 'search') { const [k, f] = d.flt.split('.'); UI[k][f] = t.value; renderMain(); refocus(`[data-flt="${d.flt}"]`); }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset && e.target.dataset.vq != null) { e.preventDefault(); const m = vendorMatches(e.target.value); if (m.length) { readForm(); UI.form.vendorId = m[0].id; UI.vq = ''; renderMain(); } } });
@@ -2379,7 +2383,8 @@ document.addEventListener('submit', async e => {
       S.reqs.forEach(r => { if (r.payee && r.payee.bank === old) r.payee.bank = name; });
     }
     save(); closeModal(); toast(`Đã lưu ${name}`); renderMain(); return; }
-  if (f.id === 'bankForm') { const v = {bank: (bankByName(g('bank')) || {name:''}).name, acc: g('acc').replace(/\s/g,''), accName: bankText(g('accName'))};
+  if (f.id === 'bankForm') { const v = {bank: (bankByName(g('bank')) || {name:''}).name, branch: g('branch'), acc: g('acc').replace(/\s/g,''), accName: bankText(g('accName'))};
+    if (v.branch.length > BRANCH_MAX) return mErr(`Chi nhánh tối đa ${BRANCH_MAX} ký tự.`);
     if (!v.bank) return mErr('Chọn ngân hàng trong danh sách Master Data.');
     if (!/^\d{6,20}$/.test(v.acc)) return mErr('Số tài khoản chỉ gồm số, từ 6 đến 20 chữ số.');
     if (v.accName.length < 3) return mErr('Nhập tên chủ tài khoản.');
@@ -2404,7 +2409,8 @@ document.addEventListener('submit', async e => {
   if (f.id === 'reasonForm') { const reason = g('reason'); if (reason.length < 5) { $('#reasonErr').textContent = 'Ghi lý do, tối thiểu 5 ký tự.'; return; }
     const fn = reasonFn; reasonFn = null; closeModal(); if (fn) fn(reason); save(); if (UI.view === 'batch' && batch(UI.id) && batch(UI.id).status === 'cancelled' && !batch(UI.id).reqIds.length) go('batches'); else render(); return; }
   if (f.id === 'vendorForm') { const ctx = UI.vctx || {id:null, ctx:'form'};
-    const v = {name:g('name'), tax:g('tax'), bank:(bankByName(g('bank')) || {name:''}).name, acc:g('acc'), accName:bankText(g('accName'))};
+    const v = {name:g('name'), tax:g('tax'), bank:(bankByName(g('bank')) || {name:''}).name, branch:g('branch'), acc:g('acc'), accName:bankText(g('accName'))};
+    if (v.branch.length > BRANCH_MAX) return mErr(`Chi nhánh tối đa ${BRANCH_MAX} ký tự.`);
     if (v.name.length < 3 || !v.bank || !v.acc || !v.accName) return mErr('Nhập đủ tên NCC, ngân hàng, số tài khoản và tên tài khoản.');
     if (!/^[0-9A-Z]{4,24}$/.test(v.acc)) return mErr('Số tài khoản gồm 4 đến 24 ký tự số hoặc chữ.');
     if (v.tax && !/^\d{10}(-?\d{3})?$/.test(v.tax)) return mErr('Mã số thuế gồm 10 số, hoặc 10 số kèm 3 số chi nhánh.');
@@ -2691,6 +2697,8 @@ document.addEventListener('change', e => {
 });
 
 /* ===================== Master Data: NCC, ngân hàng, hạng mục ===================== */
+const BRANCH_MAX = 300; // Chi nhánh ngân hàng: nhập tự do, tuỳ chọn
+const bankFull = (bank, branch) => branch ? `${bank || ''} – ${branch}` : (bank || '');
 const bankList = () => (S.banks || []).slice().sort((a,b) => a.name.localeCompare(b.name, 'vi'));
 const normBank = s => noAccent(String(s || '')).toLowerCase().replace(/\s+/g, ' ').trim();
 const bankByName = v => { const k = normBank(v); return k ? (S.banks || []).find(b => normBank(b.name) === k || normBank(b.code) === k) || null : null; };
