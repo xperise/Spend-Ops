@@ -42,6 +42,7 @@ const IC = {
   chart:'<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>',
   users:'<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4.5a3 3 0 0 1 0 6M21 20c0-2.6-1.6-4.9-4-5.7"/>'
 };
+IC.more = '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>';
 const icon = (n, s=18) => `<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n]}</svg>`;
 
 /* ===================== Dữ liệu mẫu ===================== */
@@ -485,7 +486,7 @@ const seesBatches = u => u.acct || isSigner(u.id) || u.admin;
 
 /* ===================== Điều hướng ===================== */
 function go(view, id, extra){
-  UI.view = view; UI.id = id || null; UI.errors = {};
+  UI.view = view; UI.id = id || null; UI.errors = {}; UI.moreOpen = false;
   if (view === 'new') UI.form = formFrom(newReq({dept: me().dept}));
   if (view === 'edit') UI.form = formFrom(req(id));
   if (view === 'config') { if (!me().admin && UI.cfgTab === 'users') UI.cfgTab = 'request'; UI.draft = {config: clone(S.config)}; UI.sim = UI.sim || {requester:'u1', dept:'OPS', amount:12000000, evidence:'vat'}; }
@@ -538,8 +539,46 @@ function renderSide(){
       </button>
     <p class="persona-cap">${esc(roleLine(u))}</p>
     <nav class="nav" aria-label="Điều hướng">${nav.map(n => `<button class="${active===n[0]?'on':''}" data-go="${n[0]}">${icon(n[1])}<span>${n[2]}</span>${n[3] ? `<span class="cnt">${n[3]}</span>` : ''}</button>`).join('')}</nav>
-    <div class="side-foot"><span>Đăng nhập: ${esc(SESSION_EMAIL || '')}</span><button class="linkbtn" data-action="logout">Đăng xuất</button></div>`;
+    <div class="side-foot"><span>Đăng nhập: ${esc(SESSION_EMAIL || '')}</span><button class="linkbtn" data-action="logout">Đăng xuất</button></div>
+    ${mobileNav(nav, active)}`;
 }
+/* Điện thoại: thanh tab dưới đáy (4 mục chính + Thêm), các mục còn lại trong bảng “Thêm”. */
+function mobileNav(nav, active){
+  const primaryIds = ['home','list','inbox', nav.some(n => n[0] === 'batches') ? 'batches' : 'reports'];
+  const primary = primaryIds.map(id => nav.find(n => n[0] === id)).filter(Boolean);
+  const rest = nav.filter(n => !primaryIds.includes(n[0]));
+  const restOn = rest.some(n => n[0] === active) || UI.view === 'profile';
+  const restCnt = rest.reduce((a,n) => a + (n[3] || 0), 0);
+  const short = {home:'Tổng quan', list:'Đề xuất', inbox:'Chờ duyệt', batches:'Đợt chi', reports:'Báo cáo'};
+  const tab = (id, ic, label, cnt, on, attr) => `<button type="button" class="${on ? 'on' : ''}" ${attr}>${icon(ic, 22)}<span>${label}</span>${cnt ? `<span class="cnt">${cnt > 99 ? '99+' : cnt}</span>` : ''}</button>`;
+  return `<nav class="tabbar" aria-label="Điều hướng chính">${primary.map(n => tab(n[0], n[1], short[n[0]] || n[2], n[3], active === n[0], `data-go="${n[0]}"`)).join('')}${tab('more', 'more', 'Thêm', restCnt, restOn || UI.moreOpen, 'data-more="1" aria-haspopup="true"')}</nav>
+  <div class="more-sheet" ${UI.moreOpen ? '' : 'hidden'} data-moreclose="1"><div class="more-panel" role="menu">
+    <div class="more-grab" aria-hidden="true"></div>
+    <button type="button" class="more-new" data-go="new">${icon('plus', 20)}<span>Tạo đề xuất chi</span></button>
+    ${rest.map(n => `<button type="button" role="menuitem" class="${active === n[0] ? 'on' : ''}" data-go="${n[0]}">${icon(n[1], 20)}<span>${n[2]}</span>${n[3] ? `<span class="cnt">${n[3]}</span>` : ''}</button>`).join('')}
+    <button type="button" role="menuitem" class="${UI.view === 'profile' ? 'on' : ''}" data-go="profile">${icon('users', 20)}<span>Tài khoản cá nhân</span></button>
+    <div class="more-foot"><span>${esc(SESSION_EMAIL || '')}</span><button type="button" class="btn sec sm" data-action="logout">Đăng xuất</button></div>
+  </div></div>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-more], [data-moreclose]'); if (!b) return;
+  if (b.dataset.more) { UI.moreOpen = !UI.moreOpen; renderSide(); return; }
+  if (e.target === b) { UI.moreOpen = false; renderSide(); }
+});
+/* Điện thoại: bảng hiển thị dạng thẻ. Gắn nhãn cột (data-label) cho từng ô để CSS hiện “Nhãn: giá trị”. */
+const CARD_TITLE = /^(Nội dung|Tên NCC|Tên ngân hàng|Thao tác|Người dùng|Họ tên)/;
+function cardify(){
+  document.querySelectorAll('.tw table').forEach(t => {
+    const hs = [...t.querySelectorAll('thead th')].map(th => th.textContent.trim()); if (!hs.length) return;
+    const ti = hs.findIndex(h => CARD_TITLE.test(h));
+    t.querySelectorAll('tbody tr, tfoot tr').forEach(tr => { let i = 0;
+      [...tr.children].forEach(td => { const span = +td.getAttribute('colspan') || 1; const lab = span > 1 ? '' : (hs[i] || '');
+        if (td.getAttribute('data-label') !== lab) td.setAttribute('data-label', lab);
+        td.classList.toggle('cd-hide', lab === 'STT'); td.classList.toggle('cd-title', span === 1 && i === ti && !!tr.closest('tbody')); i += span; }); });
+  });
+}
+let cardTimer = null;
+new MutationObserver(() => { if (cardTimer) return; cardTimer = requestAnimationFrame(() => { cardTimer = null; cardify(); }); }).observe(document.body, {childList:true, subtree:true});
 function renderMain(){
   const v = UI.view; const m = $('#main');
   const views = {home:viewHome, list:viewList, inbox:viewInbox, new:viewForm, edit:viewForm, detail:viewDetail, batches:viewBatches, batch:viewBatch, delegate:viewDelegate, profile:viewProfile, reports:viewReports, master:() => canMaster(me()) ? viewMaster() : `<div class="card empty"><b>Chỉ người có quyền Master Data mở được mục này</b></div>`, dash:() => canDash(me()) ? (UI.rtab = 'dash', viewReports()) : `<div class="card empty"><b>Chỉ người được phân quyền mới xem được dashboard</b>Nhờ quản trị bật quyền “Dashboard quản trị” cho bạn.</div>`, users:() => me().admin ? (UI.cfgTab = 'users', viewConfig()) : `<div class="card empty"><b>Chỉ Quản trị quản lý người dùng</b></div>`, config:() => canCfg(me()) ? viewConfig() : `<div class="card empty"><b>Chỉ Quản trị và Kế toán mở được cấu hình</b>Đổi vai sang Quản trị hệ thống ở góc trái.</div>`};
@@ -1526,8 +1565,8 @@ function cfgNotify(D){
   const noMail = activeUsers().filter(u => !u.email);
   return `<p class="small muted" style="margin:0">Gửi email tới người duyệt khi có việc chờ họ: lúc đề xuất được gửi (hoặc gửi lại), khi đề xuất chuyển sang cấp duyệt tiếp theo, và tương tự với đợt chi. Người đang được uỷ quyền duyệt thay cũng nhận email. Email có nút mở thẳng phiếu cần duyệt.</p>
   <div class="rule open"><div class="rule-e stack" style="border-top:0">
-    <label class="row" style="gap:10px;cursor:pointer"><input type="checkbox" class="cb" data-notify="email" ${N.email !== false ? 'checked' : ''}><span><b style="font-weight:500">Email báo đề xuất chi chờ duyệt</b><div class="small faint">Gửi cho người duyệt ở bước hiện tại chưa ra quyết định.</div></span></label>
-    <label class="row" style="gap:10px;cursor:pointer"><input type="checkbox" class="cb" data-notify="batch" ${N.batch !== false ? 'checked' : ''} ${N.email === false ? 'disabled' : ''}><span><b style="font-weight:500">Email báo đợt chi chờ duyệt</b><div class="small faint">Gửi cho người duyệt đợt chi ở cấp hiện tại.</div></span></label>
+    <label class="row" style="gap:10px;cursor:pointer;flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" class="cb" data-notify="email" ${N.email !== false ? 'checked' : ''}><span><b style="font-weight:500">Email báo đề xuất chi chờ duyệt</b><div class="small faint">Gửi cho người duyệt ở bước hiện tại chưa ra quyết định.</div></span></label>
+    <label class="row" style="gap:10px;cursor:pointer;flex-wrap:nowrap;align-items:flex-start"><input type="checkbox" class="cb" data-notify="batch" ${N.batch !== false ? 'checked' : ''} ${N.email === false ? 'disabled' : ''}><span><b style="font-weight:500">Email báo đợt chi chờ duyệt</b><div class="small faint">Gửi cho người duyệt đợt chi ở cấp hiện tại.</div></span></label>
   </div></div>
   ${noMail.length ? `<div class="alert">Chưa có email nên sẽ không nhận được thông báo: ${esc(noMail.map(u => u.name).join(', '))}. Bổ sung ở trang Người dùng.</div>` : ''}
   <p class="small faint" style="margin:0">Máy chủ gửi email cần được cấu hình một lần trên Vercel (MAIL_FROM và RESEND_API_KEY hoặc SMTP). Khi chưa cấu hình, ứng dụng vẫn chạy bình thường, chỉ không gửi email.</p>`;
@@ -1944,7 +1983,7 @@ function configSlots(id){
 function viewUsers(inner){
   const list = S.users.filter(u => !u.deleted);
   return `${inner ? '' : head('Quản trị','Người dùng', `${list.filter(u=>u.active).length} người đang hoạt động. Quyền duyệt đề xuất chọn theo từng bước ở Cấu hình phê duyệt.`, `<button class="btn pri" data-unew="1">${icon('plus',16)} Thêm người dùng</button>`)}
-  ${inner ? '<div class="row" style="justify-content:flex-end;margin-bottom:12px"><button class="btn pri" data-unew="1">${icon(\'plus\',16)} Thêm người dùng</button></div>' : ''}
+  ${inner ? `<div class="row" style="justify-content:flex-end;margin-bottom:12px"><button class="btn pri" data-unew="1">${icon('plus',16)} Thêm người dùng</button></div>` : ''}
   <div class="tw"><table>
     <thead><tr><th>Người dùng</th><th>Phòng</th><th>Quyền</th><th>Trong luồng duyệt</th><th>Trạng thái</th><th></th></tr></thead>
     <tbody>${list.map(u => { const sl = configSlots(u.id); return `<tr>

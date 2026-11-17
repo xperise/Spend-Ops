@@ -426,6 +426,99 @@ body.auth .main{padding:0;max-width:none}
 .cal-t{margin-top:auto;font-size:11.5px;color:var(--ink);font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
 .cal-leg{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin:10px 0 16px}
 @media (max-width:860px){.cal-sum{grid-template-columns:1fr}.cal-c{min-height:52px;padding:4px}.cal-e,.cal-more,.cal-t{display:none}.cal-d{flex-direction:column;align-items:flex-start;gap:2px}}
+
+/* ===================== Điện thoại (iPhone 13 trở lên: 375–430px) ===================== */
+.tabbar,.more-sheet{display:none}
+@media (max-width:760px){
+  html{-webkit-text-size-adjust:100%}
+  .side{flex-wrap:nowrap;justify-content:space-between;padding:8px 14px;gap:10px}
+  .side .nav{display:none}
+  .brand{padding:0}
+  .persona{flex:0 1 auto;min-width:0;max-width:62%;padding:4px 10px 4px 4px;border-radius:9999px;gap:8px}
+  .persona .who span,.persona .chev{display:none}
+  .persona .who b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .main{padding:16px 14px calc(88px + env(safe-area-inset-bottom,0px))}
+  .head{margin-bottom:16px;align-items:flex-start}
+  .head h1{font-size:22px}
+  .head > .btn,.head > .row{width:100%;justify-content:center}
+  .card{padding:16px;border-radius:14px}
+  .g4{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .kpi{padding:12px 14px;border-radius:14px}
+  .kpi .v{font-size:22px}
+  .in,input,select,textarea{font-size:16px!important}
+  .btn{min-height:40px}
+  .btn.sm{min-height:34px}
+  .fbar{gap:8px}
+  .fbar > *{flex:1 1 150px;min-width:0}
+  .fbar .sp{display:none}
+  .fbar .fdate,.fbar label{min-width:0}
+  .tabs{-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+
+  /* Thanh tab dưới đáy */
+  .tabbar{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--surface);border-top:1px solid var(--line);padding:4px 4px env(safe-area-inset-bottom,0px)}
+  .tabbar button{all:unset;box-sizing:border-box;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:52px;padding:4px 2px;font-size:11px;font-weight:500;color:var(--ink-3);cursor:pointer;-webkit-tap-highlight-color:transparent}
+  .tabbar button.on{color:var(--primary-ink)}
+  .tabbar button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:10px}
+  .tabbar .cnt{position:absolute;top:2px;left:calc(50% + 6px);min-width:17px;height:17px;padding:0 4px;box-sizing:border-box;border-radius:9999px;background:var(--critical);color:#fff;font-size:10.5px;font-weight:600;display:grid;place-items:center;font-variant-numeric:tabular-nums}
+  .more-sheet{display:block;position:fixed;inset:0;z-index:45;background:#00000059}
+  .more-sheet[hidden]{display:none}
+  .more-panel{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-radius:18px 18px 0 0;padding:6px 12px calc(14px + env(safe-area-inset-bottom,0px));box-shadow:var(--elevation-lg);max-height:85dvh;overflow:auto}
+  .more-grab{width:36px;height:4px;border-radius:9999px;background:var(--line-strong);margin:4px auto 10px}
+  .more-panel > button{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:12px;width:100%;min-height:48px;padding:0 12px;border-radius:12px;color:var(--ink);font-weight:500;cursor:pointer}
+  .more-panel > button.on{background:var(--color-surface-primary);color:var(--primary-ink)}
+  .more-panel > button svg{color:var(--ink-2);flex:none}
+  .more-panel > button .cnt{margin-left:auto;font-size:12px;font-weight:600;color:var(--primary-ink)}
+  .more-panel > .more-new{color:var(--primary-ink);border:1px solid var(--line);margin-bottom:6px}
+  .more-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px;padding:10px 12px 0;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-3)}
+  .more-foot span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* Hộp thoại thành bảng trượt từ dưới lên */
+  .modal-bg{align-items:end;padding:0}
+  .modal-bg > *{width:100%!important;max-width:100%!important;border-radius:18px 18px 0 0!important;max-height:92dvh!important}
+  .modal-h{padding:16px 16px 0}
+  .modal-b{padding:14px 16px}
+  .modal-f{padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));flex-wrap:wrap}
+  .modal-f .btn{flex:1 1 auto}
+  .toast{bottom:calc(76px + env(safe-area-inset-bottom,0px))}
+
+  /* Bảng thành thẻ: mỗi dòng là một thẻ, mỗi ô hiện “Nhãn  giá trị” */
+  .tw{border:0;background:transparent;border-radius:0;overflow:visible}
+  .tw table,.tw tbody,.tw tfoot{display:block;width:100%}
+  .tw thead{display:none}
+  .tw tr{display:block;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:6px 14px;margin-bottom:10px}
+  .tw tr.click:active{background:var(--surface-2)}
+  .tw tfoot tr{background:var(--surface-2)}
+  .tw tr{display:flex;flex-direction:column}
+  .tw td{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);column-gap:14px;row-gap:2px;justify-items:end;align-items:start;padding:7px 0;border:0;text-align:right;white-space:normal!important;min-width:0;overflow-wrap:anywhere}
+  .tw td > *{grid-column:2}
+  .tw td::before{content:attr(data-label);grid-column:1;grid-row:1;max-width:46vw;color:var(--ink-3);font-size:12.5px;font-weight:400;text-align:left;padding-top:1px;justify-self:start}
+  .tw td[data-label=""]{display:block;text-align:left;justify-items:normal}
+  .tw td[data-label=""]::before{display:none}
+  .tw td:empty,.tw td.cd-hide{display:none}
+  .tw td.cd-title{order:-1;display:block;justify-items:normal;text-align:left;padding:8px 0 10px;border-bottom:1px solid var(--line-soft);margin-bottom:2px}
+  .tw td.cd-title::before{display:none}
+  .tw td > .in,.tw td > .money,.tw td > select{justify-self:stretch}
+  .tw td .row{justify-content:flex-end}
+  .tw td.cd-title .row,.tw td[data-label=""] .row{justify-content:flex-start}
+  .lvl-opts label{align-items:flex-start}
+  .tw td.act{display:flex;justify-content:flex-end;flex-wrap:wrap}
+  .tw td.act::before{display:none}
+  .app{align-content:start}
+  .li{flex-wrap:wrap;row-gap:8px;align-items:flex-start}
+  .li .t{white-space:normal}
+  .li:has(> .btn) .grow{flex:1 1 calc(100% - 64px)}
+  .li:has(> .btn) > .amt{flex:1 1 auto;padding-left:46px;align-self:center}
+  .li > .btn{min-height:36px}
+  .head > div[style*="text-align:right"]{text-align:left!important}
+  .fbar > label:has(input[type=checkbox]){flex-basis:100%}
+  .band-h{padding:12px 14px}
+  .band-h .range .money{width:100%;max-width:200px}
+  .band-b{padding:4px 14px 10px}
+  .band-h > .row{margin-left:0!important;flex-wrap:wrap!important}
+  .lvl-opts label{display:flex;flex-direction:column;gap:4px}
+  .lvl-opts select{width:100%}
+}
 </style>
 </head>
 <body>
