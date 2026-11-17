@@ -570,8 +570,9 @@ const CARD_TITLE = /^(Nội dung|Tên NCC|Tên ngân hàng|Thao tác|Người d�
 function cardify(){
   document.querySelectorAll('.tw table').forEach(t => {
     const hs = [...t.querySelectorAll('thead th')].map(th => th.textContent.trim()); if (!hs.length) return;
-    const ti = hs.findIndex(h => CARD_TITLE.test(h));
-    t.querySelectorAll('tbody tr, tfoot tr').forEach(tr => { let i = 0;
+    const ths = [...t.querySelectorAll('thead th')]; const ti0 = ths.findIndex(th => th.classList.contains('cd-t'));
+    const ti = ti0 >= 0 ? ti0 : hs.findIndex(h => CARD_TITLE.test(h));
+    t.querySelectorAll('tbody tr:not([data-nolabel]), tfoot tr').forEach(tr => { let i = 0;
       [...tr.children].forEach(td => { const span = +td.getAttribute('colspan') || 1; const lab = span > 1 ? '' : (hs[i] || '');
         if (td.getAttribute('data-label') !== lab) td.setAttribute('data-label', lab);
         td.classList.toggle('cd-hide', lab === 'STT'); td.classList.toggle('cd-title', span === 1 && i === ti && !!tr.closest('tbody')); i += span; }); });
@@ -2284,7 +2285,7 @@ function summaryData(){
   const ex = f.exCancel !== false; const isClosed = r => r.status === 'cancelled' || r.status === 'rejected';
   const cancelled = all.filter(isClosed);
   const rs = ex ? all.filter(r => !isClosed(r)) : all;
-  const grp = (keyFn) => { const m = {}; rs.forEach(r => { const k = keyFn(r); (m[k] = m[k] || {k, n:0, amt:0, paid:0}); m[k].n++; m[k].amt += r.amount; if (r.status === 'paid') m[k].paid += r.amount; }); return Object.values(m).sort((a,b) => b.amt - a.amt); };
+  const grp = (keyFn) => { const m = {}; rs.forEach(r => { const k = keyFn(r); (m[k] = m[k] || {k, n:0, amt:0, paid:0, ids:[]}); m[k].n++; m[k].amt += r.amount; m[k].ids.push(r.id); if (r.status === 'paid') m[k].paid += r.amount; }); return Object.values(m).sort((a,b) => b.amt - a.amt); };
   const done = rs.filter(r => r.approvedAt && r.submittedAt && !r.direct);
   const paid = rs.filter(r => r.status === 'paid');
   return {rs, paid, adv: advSummary(rs), ex, cancelled:{n:cancelled.length, amt:cancelled.reduce((a,r)=>a+r.amount,0)},
@@ -2295,6 +2296,28 @@ function summaryData(){
       ['Theo hình thức thanh toán', grp(r => PAYM[pmOf(r)])], ['Theo người nhận', grp(r => payeeOf(r).name)], ['Theo người đề xuất', grp(r => user(r.requester).name)]
     ]};
 }
+/* Báo cáo tổng hợp: một bảng duy nhất, nút “Nhóm theo” đổi chiều nhóm; bấm một dòng để xem các phiếu bên trong. */
+function groupTable(d, tot){
+  const gi = Math.min(UI.rgroup || 0, d.tables.length - 1); const [name, rows] = d.tables[gi];
+  const col = name.replace('Theo ','').replace(/^./, c => c.toUpperCase());
+  const open = UI.ropen || {}; const sum = k => rows.reduce((a,x) => a + x[k], 0);
+  return `<div class="card"><div class="ch"><h2 class="card-title">Tổng hợp ${name.toLowerCase()}</h2><span class="card-note">${rows.length} dòng · bấm một dòng để xem các phiếu</span></div>
+    <div class="row" style="margin-bottom:14px" role="group" aria-label="Nhóm theo"><span class="small muted">Nhóm theo</span>
+      <div class="seg grp-seg">${d.tables.map(([n], i) => `<button type="button" class="${i === gi ? 'on' : ''}" aria-pressed="${i === gi}" data-rgroup="${i}">${n.replace('Theo ','').replace(/^./, c => c.toUpperCase())}</button>`).join('')}</div></div>
+    ${rows.length ? `<div class="tw"><table><thead><tr><th class="r">STT</th><th class="cd-t">${col}</th><th class="r">Số lệnh</th><th class="r">Đề nghị (đ)</th><th class="r">Đã chi (đ)</th><th class="r">Còn lại (đ)</th><th class="r">Tỷ trọng</th></tr></thead><tbody>
+      ${rows.map((x,i) => { const key = gi + ':' + x.k; const isOpen = !!open[key];
+        return `<tr class="click" data-rexp="${esc(key)}" tabindex="0" aria-expanded="${isOpen}"><td class="r faint">${i+1}</td><td><span class="small faint" aria-hidden="true">${isOpen ? '▾' : '▸'}</span> ${esc(x.k)}</td><td class="r">${x.n}</td><td class="r">${fmt(x.amt)}</td><td class="r">${fmt(x.paid)}</td><td class="r">${fmt(x.amt - x.paid)}</td><td class="r">${(x.amt/tot*100).toFixed(1).replace('.',',')}%</td></tr>
+        ${isOpen ? x.ids.map(id => req(id)).sort((a,b) => b.amount - a.amount).map(r => `<tr class="click sub" data-open="${r.id}" data-nolabel="1" tabindex="0"><td></td><td class="small cd-title" data-label=""><span class="code">${esc(r.code || '')}</span> · ${esc(r.title)}<div class="faint">${esc(user(r.requester).name)} · ${dOnly(r.createdAt)}</div></td><td class="r" data-label="Trạng thái">${pill(r.status)}</td><td class="r small" data-label="Số tiền (đ)">${fmt(r.amount)}</td><td class="r small" data-label="Đã chi (đ)">${r.status === 'paid' ? fmt(r.amount) : '0'}</td><td class="r small" data-label="Còn lại (đ)">${r.status === 'paid' ? '0' : fmt(r.amount)}</td><td></td></tr>`).join('') : ''}`; }).join('')}
+      </tbody><tfoot><tr><td></td><td>Tổng</td><td class="r">${sum('n')}</td><td class="r">${fmt(sum('amt'))}</td><td class="r">${fmt(sum('paid'))}</td><td class="r">${fmt(sum('amt') - sum('paid'))}</td><td class="r">${rows.length ? '100%' : ''}</td></tr></tfoot></table></div>`
+    : '<div class="empty" style="padding:16px"><b>Chưa có dữ liệu</b></div>'}</div>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-rgroup], tr[data-rexp]'); if (!b) return;
+  if (b.dataset.rgroup != null) { UI.rgroup = +b.dataset.rgroup; renderMain(); return; }
+  if (e.target.closest('button, a, input, select')) return;
+  UI.ropen = UI.ropen || {}; const k = b.dataset.rexp; UI.ropen[k] = !UI.ropen[k]; renderMain();
+});
+document.addEventListener('keydown', e => { const t = e.target; if (e.key === 'Enter' && t.matches && t.matches('tr[data-rexp]')) t.click(); });
 function viewReports(){
   const tab = UI.rtab || (canDash(me()) ? 'dash' : 'summary'); UI.rtab = tab; const f = UI.rflt;
   const tb = (v, t) => `<button role="tab" class="${tab===v?'on':''}" data-rtab="${v}">${t}</button>`;
@@ -2327,9 +2350,7 @@ function viewReports(){
       </tbody></table></div>
       <p class="small faint" style="margin:10px 0 0">Hoàn ứng thừa là phần người đề xuất đã nhận tạm ứng nhưng chi thực tế thấp hơn, và phải trả lại công ty. Phần chi thêm là phần công ty chi bổ sung qua phiếu chênh lệch.</p></div>
       <div class="g2" style="margin-top:16px">${advTable('Theo người đề xuất', d.adv.byPerson)}${advTable('Theo phòng', d.adv.byDept)}</div>` : ''}
-    <div class="g2">${d.tables.map(([name, rows]) => `<div class="card"><div class="ch"><h2 class="card-title">${name}</h2><span class="card-note">${rows.length} dòng</span></div>
-      ${rows.length ? `<div class="tw"><table><thead><tr><th class="r">STT</th><th>${name.replace('Theo ','').replace(/^./, c => c.toUpperCase())}</th><th class="r">Số lệnh</th><th class="r">Đề nghị (đ)</th><th class="r">Đã chi (đ)</th><th class="r">Tỷ trọng</th></tr></thead><tbody>
-        ${rows.slice(0,12).map((x,i) => `<tr><td class="r faint">${i+1}</td><td class="small">${esc(x.k)}</td><td class="r">${x.n}</td><td class="r">${fmt(x.amt)}</td><td class="r">${fmt(x.paid)}</td><td class="r">${(x.amt/tot*100).toFixed(1).replace('.',',')}%</td></tr>`).join('')}</tbody></table></div>${rows.length > 12 ? `<p class="small faint" style="margin:8px 0 0">Còn ${rows.length-12} dòng trong file Excel.</p>` : ''}` : '<div class="empty" style="padding:16px"><b>Chưa có dữ liệu</b></div>'}</div>`).join('')}</div>
+    ${groupTable(d, tot)}
   </div>`;
 }
 
