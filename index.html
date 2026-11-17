@@ -405,6 +405,27 @@ body.auth .main{padding:0;max-width:none}
 .auth-card .sub{margin:0 0 22px;color:var(--color-content-subtle);font-size:14px;line-height:1.5}
 .auth-card .btn.pri{width:100%;justify-content:center;height:44px;margin-top:4px;font-size:15px}
 .auth-foot{margin:20px 0 0;text-align:center;font-size:12px;line-height:1.5;color:var(--color-icon-subtle)}
+
+/* Lịch chi theo tháng (Tổng quan) */
+.cal-sum{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}
+.cal-sum div{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
+.cal-sum span{font-size:12.5px;color:var(--ink-2)}.cal-sum b{font-weight:600;font-variant-numeric:tabular-nums}
+.cal-g{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border-top:1px solid var(--line);border-left:1px solid var(--line);border-radius:12px;overflow:hidden}
+.cal-h{font-size:12px;color:var(--ink-2);font-weight:500;padding:6px 8px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--surface-2)}
+.cal-c{all:unset;box-sizing:border-box;min-height:96px;padding:6px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:3px;cursor:pointer;background:var(--surface);min-width:0}
+.cal-c.out{background:var(--surface-2);cursor:default}
+.cal-c:not(.out):hover{background:var(--surface-2)}
+.cal-c:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.cal-c.sel{box-shadow:inset 0 0 0 2px var(--accent)}
+.cal-d{display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.cal-c.today .cal-d{color:var(--accent);font-weight:600}
+.cal-n{font-size:11px;padding:0 6px;border-radius:9999px;background:var(--soft);color:var(--ink-2)}
+.cal-n.late{background:var(--color-surface-negative-subtle);color:var(--critical)}
+.cal-e{font-size:11px;padding:1px 6px;overflow:hidden;text-overflow:ellipsis;max-width:100%;box-sizing:border-box}
+.cal-more{font-size:11px;color:var(--ink-3)}
+.cal-t{margin-top:auto;font-size:11.5px;color:var(--ink);font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
+.cal-leg{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin:10px 0 16px}
+@media (max-width:860px){.cal-sum{grid-template-columns:1fr}.cal-c{min-height:52px;padding:4px}.cal-e,.cal-more,.cal-t{display:none}.cal-d{flex-direction:column;align-items:flex-start;gap:2px}}
 </style>
 </head>
 <body>

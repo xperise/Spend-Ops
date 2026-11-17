@@ -567,7 +567,7 @@ function viewHome(){
   const inbox = inboxFor(u.id);
   const minePending = mine.filter(r => ['pending','approved','in_batch'].includes(r.status));
   const mineFix = mine.filter(r => r.status === 'returned' || r.status === 'draft');
-  const approved = S.reqs.filter(r => r.status === 'approved');
+  const approved = S.reqs.filter(r => r.status === 'approved' && queueOpen(r));
   const toApprove = batchesToApprove(u.id), toPay = batchesToPay();
   const paidMonth = S.reqs.filter(r => r.status === 'paid' && new Date(r.paidAt).getMonth() === new Date().getMonth());
   const k = (go, l, v, s, act) => `<button class="kpi ${act?'act':''}" data-go="${go}"><span class="l">${l}</span><span class="v">${v}</span><span class="s">${s}</span></button>`;
@@ -620,8 +620,75 @@ function viewHome(){
         : `<div class="empty"><b>Không có việc nào chờ bạn</b>Đổi vai ở góc trái để xem luồng từ phía người khác.</div>`}
       </div>
           </div>
+    ${calendarCard(u)}
   </div>`;
 }
+
+/* ===================== Tổng quan: lịch chi theo tháng ===================== */
+// Mỗi khoản lên lịch một ngày: đã chi → ngày chi; trong đợt chi → ngày hẹn thanh toán của đợt; còn lại → ngày “Cần chi trước”.
+const CALKIND = {need:'Cần chi trước', batch:'Hẹn chi trong đợt', paid:'Đã chi'};
+function calEvent(r){
+  if (['draft','cancelled','rejected'].includes(r.status)) return null;
+  if (r.status === 'paid') return r.paidAt ? {date:localDate(r.paidAt), kind:'paid'} : null;
+  if (r.status === 'in_batch') { const b = batch(r.batchId); return b && b.payDate ? {date:b.payDate, kind:'batch', b} : null; }
+  return r.needBy ? {date:r.needBy, kind:'need'} : null;
+}
+function calItems(u){
+  const all = canSeeAll(u) && (UI.cal.scope || 'all') === 'all';
+  return (all ? visibleReqs() : S.reqs.filter(r => r.requester === u.id)).map(r => { const e = calEvent(r); return e ? Object.assign({r}, e) : null; }).filter(Boolean);
+}
+function calendarCard(u){
+  UI.cal = UI.cal || {};
+  if (!UI.cal.ym) UI.cal.ym = localDate().slice(0,7);
+  const [Y, M] = UI.cal.ym.split('-').map(Number);
+  const today = localDate();
+  const items = calItems(u).filter(x => x.date.slice(0,7) === UI.cal.ym);
+  const byDay = {}; items.forEach(x => (byDay[x.date] = byDay[x.date] || []).push(x));
+  Object.values(byDay).forEach(l => l.sort((a,b) => b.r.amount - a.r.amount));
+  if (!UI.cal.day || UI.cal.day.slice(0,7) !== UI.cal.ym) UI.cal.day = today.slice(0,7) === UI.cal.ym ? today : (Object.keys(byDay).sort()[0] || UI.cal.ym + '-01');
+  const first = new Date(Y, M-1, 1), days = new Date(Y, M, 0).getDate(), lead = (first.getDay() + 6) % 7; // tuần bắt đầu thứ Hai
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push('<div class="cal-c out" aria-hidden="true"></div>');
+  for (let d = 1; d <= days; d++) {
+    const key = `${UI.cal.ym}-${p2(d)}`, l = byDay[key] || [], tot = l.reduce((a,x) => a + x.r.amount, 0);
+    const late = l.some(x => x.kind !== 'paid' && key < today);
+    cells.push(`<button type="button" class="cal-c ${key===today?'today':''} ${key===UI.cal.day?'sel':''}" data-calday="${key}" aria-label="Ngày ${d}/${M}: ${l.length} khoản${l.length ? ', ' + short(tot) : ''}">
+      <span class="cal-d">${d}${l.length ? `<span class="cal-n ${late?'late':''}">${l.length}</span>` : ''}</span>
+      ${l.slice(0,3).map(x => `<span class="cal-e pill ${STATUS[x.r.status][1]}" title="${esc(x.r.code + ' · ' + x.r.title)}">${esc(x.r.code || '')} · ${short(x.r.amount)}</span>`).join('')}
+      ${l.length > 3 ? `<span class="cal-more">+${l.length-3} khoản</span>` : ''}
+      ${l.length ? `<span class="cal-t">${short(tot)}</span>` : ''}</button>`);
+  }
+  while (cells.length % 7) cells.push('<div class="cal-c out" aria-hidden="true"></div>');
+  const sumK = k => items.filter(x => x.kind === k).reduce((a,x) => a + x.r.amount, 0);
+  const cntK = k => items.filter(x => x.kind === k).length;
+  const dl = (byDay[UI.cal.day] || []);
+  const dd = UI.cal.day.split('-');
+  const noDate = (canSeeAll(u) && (UI.cal.scope||'all') === 'all' ? visibleReqs() : S.reqs.filter(r => r.requester === u.id)).filter(r => ['pending','approved','returned'].includes(r.status) && !r.needBy).length;
+  return `<div class="card"><div class="ch"><h2 class="card-title">Lịch chi tháng ${M}/${Y}</h2>
+    <div class="row" style="gap:6px">
+      ${canSeeAll(u) ? `<select class="in" style="width:150px;height:30px" data-calscope="1" aria-label="Phạm vi"><option value="all" ${(UI.cal.scope||'all')==='all'?'selected':''}>Toàn công ty</option><option value="mine" ${UI.cal.scope==='mine'?'selected':''}>Phiếu của tôi</option></select>` : ''}
+      <button class="btn sec sm" data-calnav="-1" aria-label="Tháng trước">‹</button><button class="btn sec sm" data-calnav="0">Tháng này</button><button class="btn sec sm" data-calnav="1" aria-label="Tháng sau">›</button></div></div>
+    <div class="cal-sum">${Object.keys(CALKIND).map(k => `<div><span>${CALKIND[k]}</span><b>${cntK(k)} khoản · ${short(sumK(k))}</b></div>`).join('')}</div>
+    <div class="cal-g"><div class="cal-h">T2</div><div class="cal-h">T3</div><div class="cal-h">T4</div><div class="cal-h">T5</div><div class="cal-h">T6</div><div class="cal-h">T7</div><div class="cal-h">CN</div>${cells.join('')}</div>
+    <div class="cal-leg small faint">${['pending','approved','in_batch','paid','returned'].map(st => pill(st)).join(' ')}<span>Số đỏ: có khoản quá ngày mà chưa chi.</span>${noDate ? `<span>${noDate} khoản đang xử lý chưa chọn ngày cần chi nên không có trên lịch.</span>` : ''}</div>
+    <div class="cal-day"><h3 class="card-title" style="font-size:14px;margin:0 0 8px">Ngày ${dd[2]}/${dd[1]}/${dd[0]}${dl.length ? ` · ${dl.length} khoản · ${money(dl.reduce((a,x)=>a+x.r.amount,0))}` : ''}</h3>
+    ${dl.length ? `<div class="tw"><table><thead><tr><th>Mã</th><th>Nội dung</th><th>Mốc ngày</th><th>Đợt chi</th><th>Trạng thái</th><th class="r">Số tiền (đ)</th></tr></thead><tbody>
+      ${dl.map(x => { const r = x.r, b = x.b || (r.batchId ? batch(r.batchId) : null), qf = r.status === 'approved' ? queueFrom(r) : null;
+        return `<tr class="click" data-open="${r.id}" tabindex="0"><td class="code">${esc(r.code || '—')}</td><td><div class="ttl">${esc(r.title)}</div><div class="small faint">${esc(user(r.requester)?.name || '—')}</div></td>
+        <td class="small">${CALKIND[x.kind]}${x.kind !== 'paid' && x.date < today ? '<div style="color:var(--critical)">Quá ngày</div>' : ''}</td>
+        <td class="small">${b ? `${esc(b.code)}<div class="faint">${BSTATUS[b.status][0]}</div>` : r.status === 'approved' ? (qf && qf > today ? `Chưa vào hàng chờ<div class="faint">từ ${dOnly(qf+'T00:00')}</div>` : 'Chờ lập đợt') : r.status === 'pending' ? 'Đang duyệt đề xuất' : '—'}</td>
+        <td>${pill(r.status)}</td><td class="r">${fmt(r.amount)}</td></tr>`; }).join('')}</tbody></table></div>`
+      : '<div class="empty" style="padding:16px"><b>Không có khoản nào trong ngày này</b>Bấm vào ngày khác trên lịch để xem.</div>'}</div>
+  </div>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return; const d = b.dataset;
+  if (d.calnav != null) { UI.cal = UI.cal || {}; if (d.calnav === '0') UI.cal.ym = localDate().slice(0,7); else { const [y,m] = (UI.cal.ym || localDate().slice(0,7)).split('-').map(Number); const t = new Date(y, m - 1 + Number(d.calnav), 1); UI.cal.ym = `${t.getFullYear()}-${p2(t.getMonth()+1)}`; } UI.cal.day = null; renderMain(); return; }
+  if (d.calday) { UI.cal.day = d.calday; renderMain(); return; }
+});
+document.addEventListener('change', e => {
+  if (e.target.dataset.calscope) { UI.cal = UI.cal || {}; UI.cal.scope = e.target.value; renderMain(); }
+});
 
 
 /* ===================== Bộ lọc, xuất file ===================== */
@@ -1101,9 +1168,17 @@ function viewDetail(){
 }
 
 /* ===================== Đợt chi — danh sách ===================== */
-function queueRows(){ const f = UI.qflt; return S.reqs.filter(r => r.status === 'approved' && (!f.pm || pmOf(r) === f.pm)).sort((a,b) => (a.approvedAt||0) - (b.approvedAt||0)); }
+/* Lịch hiện khoản chờ thanh toán: khoản có “Cần chi trước ngày” chỉ hiện trong hàng chờ của kế toán từ (ngày đó − X ngày).
+   X đặt ở Cấu hình → Đợt chi. Để trống = hiện ngay khi duyệt xong. Khoản không có ngày cần chi luôn hiện. */
+const leadDays = () => { const n = S.config && S.config.batch ? S.config.batch.leadDays : null; return n == null || n === '' ? null : Number(n); };
+const addDays = (d, n) => { const t = new Date(d + 'T00:00'); t.setDate(t.getDate() + n); return localDate(t.getTime()); };
+const queueFrom = r => { const x = leadDays(); return x == null || !r.needBy ? null : addDays(r.needBy, -x); };
+const queueOpen = r => { const f = queueFrom(r); return !f || f <= localDate(); };
+const queueAll = () => { const f = UI.qflt; return S.reqs.filter(r => r.status === 'approved' && (!f.pm || pmOf(r) === f.pm)).sort((a,b) => (a.approvedAt||0) - (b.approvedAt||0)); };
+const queueLater = () => queueAll().filter(r => !queueOpen(r));
+function queueRows(){ return queueAll().filter(r => UI.showEarly || queueOpen(r)); }
 function viewBatches(){
-  const u = me(); const approved = queueRows();
+  const u = me(); const approved = queueRows(); const later = queueLater();
   const sel = approved.filter(r => UI.batchSel[r.id]);
   const order = {review:0, approved:1, paying:1, paid:2, returned:3, cancelled:4};
   const bs = S.batches.filter(b => inRange(b.createdAt, UI.bflt)).sort((a,b) => order[a.status]-order[b.status] || b.createdAt-a.createdAt);
@@ -1113,10 +1188,11 @@ function viewBatches(){
     ${u.acct ? `<div class="card"><div class="ch"><h2 class="card-title">Chờ thanh toán</h2><div class="row"><span class="card-note">${approved.length} khoản, ${short(approved.reduce((a,r)=>a+r.amount,0))}</span>
         <select class="in" style="width:160px;height:30px" data-flt="qflt.pm" aria-label="Lọc hình thức">${['', ...Object.keys(PAYM)].map(k => `<option value="${k}" ${UI.qflt.pm===k?'selected':''}>${k ? PAYM[k] : 'Mọi hình thức'}</option>`).join('')}</select>
         <button class="btn sec sm" data-action="direct">${icon('plus',14)} Khoản chi trực tiếp</button></div></div>
+      ${later.length ? `<div class="alert" style="margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:220px">${UI.showEarly ? 'Đang hiện cả' : 'Đang ẩn'} <b>${later.length} khoản chưa tới lịch</b> (${short(later.reduce((a,r)=>a+r.amount,0))}). Khoản có ngày cần chi chỉ vào hàng chờ trước ${leadDays()} ngày, đặt ở Cấu hình → Đợt chi.</span><button class="btn sec sm" data-action="qearly">${UI.showEarly ? 'Ẩn khoản chưa tới lịch' : 'Hiện để lập đợt sớm'}</button></div>` : ''}
       ${UI.errors.batch ? `<div class="alert neg" style="margin-bottom:12px">${esc(UI.errors.batch)}</div>` : ''}
       ${approved.length ? `<div class="tw"><table><thead><tr><th style="width:40px"><input type="checkbox" class="cb" data-bselall="1" aria-label="Chọn tất cả" ${sel.length === approved.length ? 'checked' : ''}></th><th class="r">STT</th><th>Mã</th><th>Ngày duyệt</th><th>Nội dung</th><th>Người nhận</th><th>Hình thức</th><th class="r">Số tiền (đ)</th></tr></thead><tbody>
         ${approved.map((r,i) => { const p = payeeOf(r); return `<tr><td><input type="checkbox" class="cb" aria-label="Chọn ${esc(r.code)}" data-bsel="${r.id}" ${UI.batchSel[r.id]?'checked':''}></td><td class="r faint">${i+1}</td>
-          <td class="code"><button class="linkbtn" data-open="${r.id}">${esc(r.code)}</button></td><td class="small num" style="white-space:nowrap">${dt(r.approvedAt)}</td><td><div class="ttl">${esc(r.title)}</div><div class="small faint">${esc(user(r.requester).name)}${r.direct?' · lập trực tiếp, chưa qua đề xuất':''}${r.needBy?` · cần trước ${dOnly(r.needBy)}`:''}</div></td>
+          <td class="code"><button class="linkbtn" data-open="${r.id}">${esc(r.code)}</button></td><td class="small num" style="white-space:nowrap">${dt(r.approvedAt)}</td><td><div class="ttl">${esc(r.title)}</div><div class="small faint">${esc(user(r.requester).name)}${r.direct?' · lập trực tiếp, chưa qua đề xuất':''}${r.needBy?` · cần trước ${dOnly(r.needBy)}`:''}</div>${queueOpen(r) ? '' : `<span class="pill" style="margin-top:4px">Chưa tới lịch, vào hàng chờ từ ${dOnly(queueFrom(r)+'T00:00')}</span>`}</td>
           <td class="small">${esc(p.name)}${p.note?` <span class="faint">(${p.note})</span>`:''}${p.ok?'':`<div style="color:var(--watch)">STK chưa xác minh <button class="linkbtn" data-verify="${p.vendorId}">Xác minh</button></div>`}</td><td class="small muted">${PAYM[pmOf(r)]}</td><td class="r">${fmt(r.amount)}</td></tr>`; }).join('')}</tbody></table></div>
         <div class="row" style="margin-top:14px"><span class="small faint">${sel.length ? `Đã chọn ${sel.length} khoản, ${money(sel.reduce((a,r)=>a+r.amount,0))}` : 'Chọn các khoản muốn gộp vào một đợt.'}</span><span class="sp"></span>
           <label class="fdate">Hẹn ngày thanh toán<input class="in" type="date" id="payDateNew" value="${UI.payDateNew}" min="${localDate()}"></label>
@@ -1437,6 +1513,11 @@ function cfgBatch(D){
   <div class="rule open"><div class="rule-e stack" style="border-top:0">
     <div><div class="rstep"><i>1</i>Mốc theo tổng tiền đợt</div><div class="stack" style="gap:12px">${bandsEditor(B, pool)}<div><button class="btn sec sm" data-addband="batch">${icon('plus',14)} Thêm mốc tiền</button></div></div></div>
     <p class="small faint" style="margin:0">Ở mỗi mốc chọn 1, 2 hoặc 3 cấp duyệt và người duyệt từng cấp. Một người chỉ ký một cấp trong cùng đợt.</p>
+  </div></div>
+  <div class="rule open"><div class="rule-e stack" style="border-top:0">
+    <div><div class="rstep"><i>2</i>Lịch đưa khoản vào hàng chờ thanh toán</div>
+      <label class="f" style="max-width:360px">Hiện trước ngày “Cần chi trước” (số ngày)<input class="in" type="number" min="0" max="365" step="1" inputmode="numeric" data-rule="leadDays" value="${B.leadDays == null ? '' : esc(B.leadDays)}" placeholder="Để trống: hiện ngay khi duyệt xong"></label></div>
+    <p class="small faint" style="margin:0">Ví dụ đặt 3: khoản cần chi trước 20/12 chỉ hiện trong “Chờ thanh toán” của kế toán từ 17/12. Khoản không chọn ngày cần chi luôn hiện ngay. Kế toán vẫn bấm “Hiện để lập đợt sớm” được khi cần. Áp dụng cho mọi khoản ngay sau khi lưu.</p>
   </div></div>`;
 }
 function renameModal(kind, gi, ci){
@@ -1760,8 +1841,9 @@ document.addEventListener('click', e => {
   if (a === 'comment') { const v = ($('#cmt').value||'').trim(); if (!v) return; const r = req(UI.id); log(r, S.me, `bình luận: ${v}`); save(); renderMain(); return; }
   if (a === 'selall') { const items = inboxFor(S.me); const all = items.every(r => UI.inboxSel[r.id]); items.forEach(r => UI.inboxSel[r.id] = !all); renderMain(); return; }
   if (a === 'bulk') { const ids = Object.keys(UI.inboxSel).filter(k => UI.inboxSel[k]); let n = 0; ids.forEach(id => { const r = req(id); if (r && canAct(r, S.me)) { act(r, S.me, 'approve', 'Duyệt hàng loạt', null, actorsFor(r, S.me)[0]); markGuide(r); n++; } }); UI.inboxSel = {}; save(); toast(`Đã duyệt ${n} khoản`); render(); return; }
+  if (a === 'qearly') { UI.showEarly = !UI.showEarly; renderMain(); return; }
   if (a === 'mkbatch') {
-    const sel = S.reqs.filter(r => r.status === 'approved' && UI.batchSel[r.id]);
+    const sel = S.reqs.filter(r => r.status === 'approved' && UI.batchSel[r.id] && (UI.showEarly || queueOpen(r)));
     const bad = sel.filter(r => !payeeOf(r).ok);
     if (bad.length) { UI.errors = {batch:`${bad.map(r=>r.code).join(', ')} có STK nhà cung cấp chưa xác minh. Bỏ chọn hoặc xác minh STK trước khi lập đợt.`}; renderMain(); return; }
     const pd = $('#payDateNew')?.value || UI.payDateNew || localDate(); if (pd < localDate()) { UI.errors = {batch:'Ngày hẹn thanh toán không được ở quá khứ.'}; renderMain(); return; }
@@ -1792,6 +1874,7 @@ document.addEventListener('input', e => {
   if (t.closest('#reqForm')) { if (t.dataset.ln != null) lineInput(t); else { readForm(); syncTotals(); } updatePreview(); return; }
   if (t.dataset.sim && t.tagName === 'INPUT') { UI.sim.amount = digits(t.value); updateSim(); const n = $('#sim [data-sim="amount"]'); if (n) { n.focus(); try { n.setSelectionRange(n.value.length, n.value.length); } catch(err){} } return; }
   if (t.dataset.max) { findBand(t.dataset.max).band.max = digits(t.value); refreshCfgSide(); return; }
+  if (t.dataset.rule === 'leadDays') { const v = t.value.trim(); UI.draft.config.batch.leadDays = v === '' ? null : Math.max(0, Math.min(365, parseInt(v, 10) || 0)); refreshCfgSide(); return; }
   if (t.dataset.rule === 'cashLimit') { UI.draft.config.cashLimit = digits(t.value); refreshCfgSide(); return; }
 });
 
