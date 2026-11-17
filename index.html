@@ -524,6 +524,20 @@ body.auth .main{padding:0;max-width:none}
 tr.sub td{background:var(--surface-2);padding-top:8px;padding-bottom:8px}
 tfoot td{font-weight:600;border-top:1px solid var(--line);border-bottom:0}
 @media (max-width:760px){.tw td{background:transparent!important}.tw tr.sub{background:var(--surface-2)}.grp-seg{display:flex;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}.grp-seg button{white-space:nowrap}.tw tr.sub{margin-left:12px}}
+
+/* Ô chọn hạng mục có tìm kiếm */
+.combo{position:relative}
+.combo .combo-in{padding-right:32px;width:100%;box-sizing:border-box}
+.combo-chev{position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--ink-3);display:flex;cursor:pointer}
+.combo-list{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;background:var(--surface);border:1px solid var(--line-strong);border-radius:12px;box-shadow:var(--elevation-lg);max-height:300px;overflow:auto;padding:6px}
+.combo-g{font-size:12px;font-weight:600;color:var(--ink-3);padding:8px 10px 4px}
+.combo-o{padding:8px 10px 8px 18px;border-radius:8px;cursor:pointer;font-size:14px;display:flex;align-items:center;gap:6px}
+.combo-o.hi{background:var(--surface-2)}
+.combo-o.sel{color:var(--primary-ink);font-weight:500}
+.combo-new,.combo-back{padding-left:10px;color:var(--primary-ink);font-weight:500;border-top:1px solid var(--line-soft);margin-top:4px}
+.combo-empty{padding:10px;font-size:13px;color:var(--ink-3)}
+.kv .combo{margin-top:2px}
+@media (max-width:760px){.combo-list{max-height:45dvh}.combo-o{min-height:40px}}
 </style>
 </head>
 <body>

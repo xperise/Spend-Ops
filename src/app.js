@@ -77,6 +77,67 @@ const CATS0 = [
 const REFUND_CAT = 'Hoàn tiền khách chuyển nhầm';
 const cats = () => S.cats;
 const catGroup = c => c === REFUND_CAT ? 'Không phải chi phí' : (S.cats.find(g => g[1].includes(c)) || ['Chưa phân nhóm'])[0];
+/* Ô chọn hạng mục có tìm kiếm. Chỉ chọn trong danh sách Master Data; allowNew (kế toán ở Đợt chi) cho tạo hạng mục mới, tự lưu vào Master Data. */
+function catPicker(name, sel, o){
+  o = o || {};
+  return `<div class="combo" data-combo="1" ${o.allowNew ? 'data-allownew="1"' : ''}>
+    <input type="hidden" ${name ? `name="${name}"` : ''} ${o.recat ? `data-recat="${o.recat}"` : ''} value="${esc(sel || '')}">
+    <input class="in combo-in" ${o.id ? `id="${o.id}"` : ''} value="${esc(sel || '')}" placeholder="Tìm hạng mục…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" ${o.label ? `aria-label="${esc(o.label)}"` : ''}>
+    <span class="combo-chev" aria-hidden="true">${icon('chev', 14)}</span>
+    <div class="combo-list" role="listbox" hidden></div></div>`;
+}
+const catExists = c => S.cats.some(g => g[1].includes(c));
+function comboOpts(box){
+  const inp = box.querySelector('.combo-in'), list = box.querySelector('.combo-list');
+  const q = noAccent(inp.value || '').toLowerCase().trim(), cur = box.querySelector('input[type=hidden]').value;
+  const showAll = box.dataset.all === '1';
+  if (box.dataset.newcat) { const nm = box.dataset.newcat;
+    list.innerHTML = `<div class="combo-g">Chọn nhóm cho “${esc(nm)}”</div>${S.cats.map((g,gi) => `<div class="combo-o" role="option" data-newgrp="${gi}">${esc(g[0])}</div>`).join('')}<div class="combo-o combo-back" role="option" data-cancelnew="1">‹ Quay lại</div>`;
+  } else {
+    const groups = S.cats.map(g => [g[0], g[1].filter(c => showAll || !q || noAccent(c).toLowerCase().includes(q) || noAccent(g[0]).toLowerCase().includes(q))]).filter(g => g[1].length);
+    const exact = S.cats.some(g => g[1].some(c => noAccent(c).toLowerCase().trim() === q));
+    list.innerHTML = groups.map(g => `<div class="combo-g">${esc(g[0])}</div>${g[1].map(c => `<div class="combo-o ${c === cur ? 'sel' : ''}" role="option" aria-selected="${c === cur}" data-pick="${esc(c)}">${esc(c)}</div>`).join('')}`).join('')
+      + (!groups.length ? `<div class="combo-empty">Không có hạng mục khớp “${esc(inp.value.trim())}”.${box.dataset.allownew ? '' : ' Nhờ kế toán thêm ở Master Data nếu cần.'}</div>` : '')
+      + (box.dataset.allownew && q && !exact ? `<div class="combo-o combo-new" role="option" data-newcat="${esc(inp.value.trim())}">${icon('plus', 14)} Tạo hạng mục “${esc(inp.value.trim())}”</div>` : '');
+  }
+  list.hidden = false; inp.setAttribute('aria-expanded', 'true');
+  const opts = [...list.querySelectorAll('.combo-o')]; const hi = opts.find(x => x.classList.contains('sel')) || opts[0];
+  opts.forEach(x => x.classList.toggle('hi', x === hi)); if (hi && hi.scrollIntoView) hi.scrollIntoView({block:'nearest'});
+}
+function comboClose(box, keep){
+  const inp = box.querySelector('.combo-in'), hid = box.querySelector('input[type=hidden]'), list = box.querySelector('.combo-list');
+  list.hidden = true; inp.setAttribute('aria-expanded', 'false'); delete box.dataset.newcat; delete box.dataset.all;
+  if (!keep) inp.value = hid.value;   // không cho giữ chữ tự gõ: trả về hạng mục đang chọn
+}
+function comboPick(box, c){
+  const hid = box.querySelector('input[type=hidden]'); const changed = hid.value !== c;
+  hid.value = c; box.querySelector('.combo-in').value = c; comboClose(box, true);
+  if (changed) { hid.dispatchEvent(new Event('input', {bubbles:true})); hid.dispatchEvent(new Event('change', {bubbles:true})); }
+}
+document.addEventListener('focusin', e => { const inp = e.target.closest && e.target.closest('.combo-in'); if (!inp) return; const box = inp.closest('.combo'); box.dataset.all = '1'; comboOpts(box); setTimeout(() => { try { inp.select(); } catch (err) {} }, 0); });
+document.addEventListener('input', e => { const inp = e.target.closest && e.target.closest('.combo-in'); if (!inp) return; e.stopPropagation(); const box = inp.closest('.combo'); delete box.dataset.all; delete box.dataset.newcat; comboOpts(box); }, true);
+document.addEventListener('focusout', e => { const inp = e.target.closest && e.target.closest('.combo-in'); if (!inp) return; const box = inp.closest('.combo'); setTimeout(() => { if (!box.contains(document.activeElement)) comboClose(box); }, 150); });
+document.addEventListener('mousedown', e => { if (e.target.closest('.combo-list')) e.preventDefault(); });
+document.addEventListener('click', e => {
+  const o = e.target.closest('.combo-o'); if (!o) { const ch = e.target.closest('.combo-chev'); if (ch) ch.closest('.combo').querySelector('.combo-in').focus(); return; }
+  const box = o.closest('.combo'); const d = o.dataset;
+  if (d.pick != null) { comboPick(box, d.pick); return; }
+  if (d.newcat) { const nm = d.newcat.trim().slice(0, 300); if (!nm) return;
+    const hit = S.cats.flatMap(g => g[1]).find(c => noAccent(c).toLowerCase() === noAccent(nm).toLowerCase()); if (hit) { comboPick(box, hit); return; }
+    box.dataset.newcat = nm; comboOpts(box); return; }
+  if (d.cancelnew) { delete box.dataset.newcat; comboOpts(box); return; }
+  if (d.newgrp != null) { const nm = box.dataset.newcat; const g = S.cats[+d.newgrp]; if (!g || !nm) return;
+    if (!catExists(nm)) { g[1].push(nm); save(); toast(`Đã thêm hạng mục “${nm}” vào nhóm ${g[0]} (Master Data)`); }
+    comboPick(box, nm); return; }
+});
+document.addEventListener('keydown', e => {
+  const inp = e.target.closest && e.target.closest('.combo-in'); if (!inp) return; const box = inp.closest('.combo'); const list = box.querySelector('.combo-list');
+  if (list.hidden && (e.key === 'ArrowDown' || e.key === 'Enter')) { if (e.key === 'ArrowDown') { box.dataset.all = '1'; comboOpts(box); e.preventDefault(); } else e.preventDefault(); return; }
+  const opts = [...list.querySelectorAll('.combo-o')]; let i = opts.findIndex(x => x.classList.contains('hi'));
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); i = e.key === 'ArrowDown' ? Math.min(opts.length - 1, i + 1) : Math.max(0, i - 1); opts.forEach((x,k) => x.classList.toggle('hi', k === i)); if (opts[i]) opts[i].scrollIntoView({block:'nearest'}); }
+  else if (e.key === 'Enter') { e.preventDefault(); if (opts[i]) opts[i].click(); }
+  else if (e.key === 'Escape') { e.stopPropagation(); comboClose(box); }
+});
 const catOptions = sel => S.cats.filter(g => g[1].length).map(g => `<optgroup label="${esc(g[0])}">${g[1].map(c => `<option ${c===sel?'selected':''}>${esc(c)}</option>`).join('')}</optgroup>`).join('') + (sel && sel !== REFUND_CAT && !S.cats.some(g => g[1].includes(sel)) ? `<option selected>${esc(sel)}</option>` : '');
 const INV_DAYS = 7;
 const ADV_DAYS = 15; // hạn quyết toán tạm ứng, tính từ ngày chi
@@ -926,7 +987,7 @@ function viewForm(){
         <label class="f full">${refund ? 'Nội dung hoàn tiền' : 'Nội dung chi'}<input class="in ${E.title?'err':''}" name="title" value="${esc(f.title)}" placeholder="${refund ? 'VD: Hoàn tiền khách ABC chuyển nhầm ngày 10/11' : 'VD: Văn phòng phẩm quý 4/2026'}" autocomplete="off">${E.title?`<span class="ferr">${E.title}</span>`:''}</label>
         <label class="f">Phòng chịu chi phí<select class="in" name="dept">${S.depts.map(d => `<option value="${d.id}" ${d.id===f.dept?'selected':''}>${esc(d.name)}</option>`).join('')}</select></label>
         ${refund ? `<label class="f">Hạng mục<input class="in" value="${REFUND_CAT}" disabled><span class="hint">Không tính vào chi phí.</span></label>`
-          : `<label class="f">Hạng mục chi phí<select class="in" name="cat">${catOptions(f.cat)}</select><span class="hint">Kế toán có thể phân loại lại sau.</span></label>`}
+          : `<div class="f"><label class="flabel" for="catPick">Hạng mục chi phí</label>${catPicker('cat', f.cat, {id:'catPick'})}<span class="hint">Gõ để tìm, chọn trong danh sách có sẵn. Kế toán có thể phân loại lại sau.</span></div>`}
         <label class="f">Hình thức thanh toán mong muốn<select class="in ${E.pm?'err':''}" name="payMethod" ${f.payeeType==='me' && !refund ? 'disabled' : ''}>${Object.entries(PAYM).filter(([k]) => !refund || k === 'transfer').map(([k,x]) => `<option value="${k}" ${(f.payeeType==='me' && !refund ? 'transfer' : f.payMethod)===k?'selected':''}>${x}</option>`).join('')}</select>${E.pm?`<span class="ferr">${E.pm}</span>`:f.payeeType==='me' && !refund ? '<span class="hint">Hoàn ứng luôn chuyển khoản về STK của bạn.</span>':''}</label>
         <label class="f">Cần chi trước ngày<input class="in" type="date" name="needBy" value="${esc(f.needBy)}"></label>
         ${f.evidence === 'advance' ? `<label class="f">Hạn quyết toán tạm ứng<input class="in ${E.settleDue?'err':''}" type="date" name="settleDue" value="${esc(f.settleDue||'')}" min="${localDate()}">${E.settleDue ? `<span class="ferr">${E.settleDue}</span>` : '<span class="hint">Chọn ngày bạn sẽ nộp hoá đơn chi thực tế. Quá ngày này sẽ được nhắc.</span>'}</label>` : ''}
@@ -1183,7 +1244,7 @@ function viewDetail(){
           <div><span>Thanh toán cho</span><b>${esc(p.name)}${p.note?` <span class="faint">(${p.note})</span>`:''}</b>${p.tax?`<div class="small faint">MST ${esc(p.tax)}</div>`:''}</div>
           <div><span>Tài khoản nhận</span><b>${esc(p.bank+' '+p.acc)}</b>${p.branch ? `<div class="small faint">Chi nhánh: ${esc(p.branch)}</div>` : ''}${r.payee.type==='vendor'&&!p.ok?'<div class="small" style="color:var(--watch)">STK chưa xác minh</div>':`<div class="small faint">${esc(p.accName)}</div>`}</div>
           <div><span>Hình thức thanh toán</span><b>${PAYM[pmOf(r)]}</b>${r.payee.type==='me'?`<div class="small faint">Đã ứng bằng ${OUTLAY[r.payee.outlay||'transfer'].toLowerCase()}</div>`:''}</div>
-          <div><span>Hạng mục chi phí</span>${u.acct && r.type !== 'refund' && r.status !== 'cancelled' ? `<select class="in" style="height:32px;margin-top:2px" data-recat="${r.id}" aria-label="Phân loại lại hạng mục">${catOptions(r.cat)}</select>` : `<b>${esc(r.cat)}</b>`}<div class="small faint">${esc(catGroup(r.cat))}</div></div>
+          <div><span>Hạng mục chi phí</span>${u.acct && r.type !== 'refund' && r.status !== 'cancelled' ? `${catPicker('', r.cat, {recat:r.id, label:'Phân loại lại hạng mục'})}` : `<b>${esc(r.cat)}</b>`}<div class="small faint">${esc(catGroup(r.cat))}</div></div>
           <div><span>Chứng từ</span><b>${r.type==='refund' ? 'Sao kê' : EVIDENCE[r.evidence][0]}</b></div>
           <div><span>Cần chi trước</span><b>${r.needBy ? dOnly(r.needBy) : 'Không yêu cầu'}</b></div>
         </div>
@@ -2186,7 +2247,7 @@ function directModal(pre){
       <div class="f full"><span class="flabel">Nhà cung cấp</span>
         <div class="row" style="flex-wrap:nowrap"><input class="in" type="search" data-vfilter placeholder="Tìm theo tên, MST hoặc số tài khoản" autocomplete="off" style="flex:1"><button type="button" class="btn sec" data-action="dnewvendor">${icon('plus',16)} NCC mới</button></div>
         <select class="in" name="vendorId" style="margin-top:6px">${act.map(x => `<option value="${x.id}" ${x.id === pre.vendorId ? 'selected' : ''}>${esc(x.name)} — ${esc(bankFull(x.bank, x.branch))} ${esc(x.acc)}${x.verified ? '' : ' (chưa xác minh)'}</option>`).join('')}</select></div>
-      <label class="f">Hạng mục chi phí<select class="in" name="cat">${catOptions(pre.cat || '')}</select></label>
+      <div class="f"><label class="flabel" for="catPickD">Hạng mục chi phí</label>${catPicker('cat', pre.cat || '', {id:'catPickD', allowNew:true})}<span class="hint">Gõ để tìm. Chưa có thì tạo mới, hạng mục mới tự lưu vào Master Data.</span></div>
       <label class="f">Phòng chịu chi phí<select class="in" name="dept">${S.depts.map(d => `<option value="${d.id}" ${d.id === (pre.dept || me().dept) ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></label>
       <label class="f">Thành tiền, gồm VAT<div class="money"><input class="in" name="total" inputmode="numeric" data-money autocomplete="off" value="${esc(pre.total || '')}"><span>đ</span></div></label>
       <label class="f">Trong đó tiền thuế<div class="money"><input class="in" name="tax" inputmode="numeric" data-money autocomplete="off" value="${esc(pre.tax || '')}"><span>đ</span></div></label>
