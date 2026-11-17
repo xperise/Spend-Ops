@@ -649,6 +649,7 @@ document.addEventListener('click', e => {
 /* Điện thoại: bảng hiển thị dạng thẻ. Gắn nhãn cột (data-label) cho từng ô để CSS hiện “Nhãn: giá trị”. */
 const CARD_TITLE = /^(Nội dung|Tên NCC|Tên ngân hàng|Thao tác|Người dùng|Họ tên)/;
 function cardify(){
+  document.querySelectorAll('input[data-mixed]').forEach(x => { x.indeterminate = true; });
   document.querySelectorAll('.tw table').forEach(t => {
     const hs = [...t.querySelectorAll('thead th')].map(th => th.textContent.trim()); if (!hs.length) return;
     const ths = [...t.querySelectorAll('thead th')]; const ti0 = ths.findIndex(th => th.classList.contains('cd-t'));
@@ -1935,6 +1936,7 @@ function copyText(txt, msg){ try { navigator.clipboard.writeText(txt).then(() =>
 
 document.addEventListener('click', e => {
   const t = e.target.closest('button, [data-open], [data-batch], [data-close], .li[data-go]'); if (!t) return;
+  if (t.matches('tr') && e.target.closest('input, label')) return;
   const d = t.dataset;
   if (d.close != null && !t.matches('button')) { if (e.target === t) closeModal(); return; }
   if (d.close != null) { closeModal(); return; }
@@ -2405,16 +2407,63 @@ function groupTable(d, tot){
   const gi = Math.min(UI.rgroup || 0, d.tables.length - 1); const [name, rows] = d.tables[gi];
   const col = name.replace('Theo ','').replace(/^./, c => c.toUpperCase());
   const open = UI.ropen || {}; const sum = k => rows.reduce((a,x) => a + x[k], 0);
+  const K = rdlKinds(); const sel = UI.rsel || {}; const selIds = d.rs.filter(r => sel[r.id]).map(r => r.id);
+  const nf = ids => ids.reduce((a,id) => a + reqFiles(req(id), K).length, 0);
+  const allN = nf(d.rs.map(r => r.id)), selN = nf(selIds);
+  const dlBtn = (attr, n, label) => n ? `<button type="button" class="btn ghost sm" ${attr} title="Tải ${n} file">${icon('download',14)} ${label || n}</button>` : '<span class="small faint">—</span>';
   return `<div class="card"><div class="ch"><h2 class="card-title">Tổng hợp ${name.toLowerCase()}</h2><span class="card-note">${rows.length} dòng · bấm một dòng để xem các phiếu</span></div>
-    <div class="row" style="margin-bottom:14px" role="group" aria-label="Nhóm theo"><span class="small muted">Nhóm theo</span>
+    <div class="row" style="margin-bottom:10px" role="group" aria-label="Nhóm theo"><span class="small muted">Nhóm theo</span>
       <div class="seg grp-seg">${d.tables.map(([n], i) => `<button type="button" class="${i === gi ? 'on' : ''}" aria-pressed="${i === gi}" data-rgroup="${i}">${n.replace('Theo ','').replace(/^./, c => c.toUpperCase())}</button>`).join('')}</div></div>
-    ${rows.length ? `<div class="tw"><table><thead><tr><th class="r">STT</th><th class="cd-t">${col}</th><th class="r">Số lệnh</th><th class="r">Đề nghị (đ)</th><th class="r">Đã chi (đ)</th><th class="r">Còn lại (đ)</th><th class="r">Tỷ trọng</th></tr></thead><tbody>
-      ${rows.map((x,i) => { const key = gi + ':' + x.k; const isOpen = !!open[key];
-        return `<tr class="click" data-rexp="${esc(key)}" tabindex="0" aria-expanded="${isOpen}"><td class="r faint">${i+1}</td><td><span class="small faint" aria-hidden="true">${isOpen ? '▾' : '▸'}</span> ${esc(x.k)}</td><td class="r">${x.n}</td><td class="r">${fmt(x.amt)}</td><td class="r">${fmt(x.paid)}</td><td class="r">${fmt(x.amt - x.paid)}</td><td class="r">${(x.amt/tot*100).toFixed(1).replace('.',',')}%</td></tr>
-        ${isOpen ? x.ids.map(id => req(id)).sort((a,b) => b.amount - a.amount).map(r => `<tr class="click sub" data-open="${r.id}" data-nolabel="1" tabindex="0"><td></td><td class="small cd-title" data-label=""><span class="code">${esc(r.code || '')}</span> · ${esc(r.title)}<div class="faint">${esc(user(r.requester).name)} · ${dOnly(r.createdAt)}</div></td><td class="r" data-label="Trạng thái">${pill(r.status)}</td><td class="r small" data-label="Số tiền (đ)">${fmt(r.amount)}</td><td class="r small" data-label="Đã chi (đ)">${r.status === 'paid' ? fmt(r.amount) : '0'}</td><td class="r small" data-label="Còn lại (đ)">${r.status === 'paid' ? '0' : fmt(r.amount)}</td><td></td></tr>`).join('') : ''}`; }).join('')}
-      </tbody><tfoot><tr><td></td><td>Tổng</td><td class="r">${sum('n')}</td><td class="r">${fmt(sum('amt'))}</td><td class="r">${fmt(sum('paid'))}</td><td class="r">${fmt(sum('amt') - sum('paid'))}</td><td class="r">${rows.length ? '100%' : ''}</td></tr></tfoot></table></div>`
+    <div class="dlbar"><span class="small muted">Tải file</span>
+      ${[['unc','UNC'],['inv','Hoá đơn'],['doc','Chứng từ khác']].map(([k,l]) => `<label class="dlk"><input type="checkbox" class="cb" data-rdlk="${k}" ${K[k] ? 'checked' : ''}>${l}</label>`).join('')}
+      <span class="sp"></span>
+      ${selIds.length ? `<button type="button" class="linkbtn small" data-rselclear="1">Bỏ chọn</button>` : ''}
+      <button type="button" class="btn sec sm" data-rdl="sel" ${selN ? '' : 'disabled'}>${icon('download',14)} Tải đã chọn${selIds.length ? ` (${selIds.length} phiếu, ${selN} file)` : ''}</button>
+      <button type="button" class="btn pri sm" data-rdl="all" ${allN ? '' : 'disabled'}>${icon('download',14)} Tải tất cả theo bộ lọc (${d.rs.length} phiếu, ${allN} file)</button></div>
+    ${rows.length ? `<div class="tw"><table><thead><tr><th class="r">STT</th><th class="cd-t">${col}</th><th class="r">Số lệnh</th><th class="r">Đề nghị (đ)</th><th class="r">Đã chi (đ)</th><th class="r">Còn lại (đ)</th><th class="r">Tỷ trọng</th><th class="r">File</th></tr></thead><tbody>
+      ${rows.map((x,i) => { const key = gi + ':' + x.k; const isOpen = !!open[key]; const gAll = x.ids.every(id => sel[id]); const gSome = x.ids.some(id => sel[id]);
+        return `<tr class="click" data-rexp="${esc(key)}" tabindex="0" aria-expanded="${isOpen}"><td class="r faint">${i+1}</td><td><input type="checkbox" class="cb" data-rselg="${esc(key)}" aria-label="Chọn các phiếu trong ${esc(x.k)}" ${gAll ? 'checked' : ''} ${!gAll && gSome ? 'data-mixed="1"' : ''}> <span class="small faint" aria-hidden="true">${isOpen ? '▾' : '▸'}</span> ${esc(x.k)}</td><td class="r">${x.n}</td><td class="r">${fmt(x.amt)}</td><td class="r">${fmt(x.paid)}</td><td class="r">${fmt(x.amt - x.paid)}</td><td class="r">${(x.amt/tot*100).toFixed(1).replace('.',',')}%</td><td class="r">${dlBtn(`data-rdl="grp" data-k="${esc(key)}"`, nf(x.ids))}</td></tr>
+        ${isOpen ? x.ids.map(id => req(id)).sort((a,b) => b.amount - a.amount).map(r => { const fs = reqFiles(r, K); return `<tr class="click sub" data-open="${r.id}" data-nolabel="1" tabindex="0"><td><input type="checkbox" class="cb" data-rsel="${r.id}" aria-label="Chọn ${esc(r.code || '')}" ${sel[r.id] ? 'checked' : ''}></td><td class="small cd-title" data-label=""><span class="code">${esc(r.code || '')}</span> · ${esc(r.title)}<div class="faint">${esc(user(r.requester).name)} · ${dOnly(r.createdAt)}${fs.length ? ' · ' + esc(fileSummary(fs)) : ' · chưa có file'}</div></td><td class="r" data-label="Trạng thái">${pill(r.status)}</td><td class="r small" data-label="Số tiền (đ)">${fmt(r.amount)}</td><td class="r small" data-label="Đã chi (đ)">${r.status === 'paid' ? fmt(r.amount) : '0'}</td><td class="r small" data-label="Còn lại (đ)">${r.status === 'paid' ? '0' : fmt(r.amount)}</td><td></td><td class="r" data-label="File">${dlBtn(`data-rdl="one" data-id="${r.id}"`, fs.length)}</td></tr>`; }).join('') : ''}`; }).join('')}
+      </tbody><tfoot><tr><td></td><td>Tổng</td><td class="r">${sum('n')}</td><td class="r">${fmt(sum('amt'))}</td><td class="r">${fmt(sum('paid'))}</td><td class="r">${fmt(sum('amt') - sum('paid'))}</td><td class="r">${rows.length ? '100%' : ''}</td><td class="r">${allN || ''}</td></tr></tfoot></table></div>`
     : '<div class="empty" style="padding:16px"><b>Chưa có dữ liệu</b></div>'}</div>`;
 }
+/* Tải UNC, hoá đơn, chứng từ của phiếu: một phiếu, các phiếu đã chọn, một nhóm, hoặc tất cả phiếu theo bộ lọc. */
+const INV_KINDS = ['vat','sale'];
+function rdlKinds(){ return UI.rdlk = UI.rdlk || {unc:true, inv:true, doc:true}; }
+function reqFiles(r, K){
+  if (!r) return []; const out = [], used = new Set();
+  const add = (key, cat) => { if (!key || used.has(key)) return; used.add(key); out.push({key, cat}); };
+  if (K.unc) (r.unc || []).forEach(k => add(k, 'UNC'));
+  (r.files || []).forEach(x => { const k = typeof x === 'string' ? x : x.name; const kd = typeof x === 'string' ? 'other' : x.kind; const inv = INV_KINDS.includes(kd); if (inv ? K.inv : K.doc) add(k, inv ? 'HoaDon' : 'ChungTu'); });
+  if (K.inv) (r.settleFiles || []).forEach(k => add(k, 'HoaDon_QuyetToan'));
+  return out;
+}
+function fileSummary(fs){ const c = {}; fs.forEach(f => { const l = f.cat === 'UNC' ? 'UNC' : f.cat.startsWith('HoaDon') ? 'hoá đơn' : 'chứng từ'; c[l] = (c[l] || 0) + 1; }); return Object.entries(c).map(([l,n]) => `${n} ${l}`).join(', '); }
+const slug = t => noAccent(String(t || '')).replace(/[^A-Za-z0-9]+/g, '_').slice(0, 40).replace(/^_+|_+$/g, '');
+async function downloadReqs(ids, zipName){
+  const K = rdlKinds(); const rs = ids.map(id => req(id)).filter(Boolean);
+  const items = rs.flatMap(r => reqFiles(r, K).map(f => ({key:f.key, name:`${r.code || 'Nhap'}_${slug(r.title)}/${new RegExp('^' + f.cat.split('_')[0], 'i').test(fname(f.key)) ? '' : f.cat + '_'}${fname(f.key)}`})));
+  if (!items.length) { toast('Không có file nào khớp loại đã chọn.'); return; }
+  if (items.length === 1) { downloadKey(items[0].key); return; }
+  const seen = {}; items.forEach(it => { const n = it.name; seen[n] = (seen[n] || 0) + 1; if (seen[n] > 1) it.name = n.replace(/(\.[^./]+)?$/, `_${seen[n]}$1`); });
+  toast(`Đang nén ${items.length} file của ${rs.length} phiếu…`);
+  await zipKeys(zipName, items);
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-rdl], [data-rselclear]'); if (!b) return; e.stopPropagation();
+  if (b.dataset.rselclear) { UI.rsel = {}; renderMain(); return; }
+  const d = summaryData(); const mode = b.dataset.rdl; const stamp = localDate();
+  if (mode === 'one') { const r = req(b.dataset.id); downloadReqs([r.id], `${r.code}_${slug(r.title)}.zip`); return; }
+  if (mode === 'sel') { const ids = d.rs.filter(r => (UI.rsel || {})[r.id]).map(r => r.id); downloadReqs(ids, `Chung_tu_da_chon_${stamp}.zip`); return; }
+  if (mode === 'all') { downloadReqs(d.rs.map(r => r.id), `Chung_tu_theo_bo_loc_${stamp}.zip`); return; }
+  if (mode === 'grp') { const [gi, ...k] = b.dataset.k.split(':'); const g = d.tables[+gi][1].find(x => x.k === k.join(':')); if (g) downloadReqs(g.ids, `Chung_tu_${slug(g.k)}_${stamp}.zip`); }
+}, true);
+document.addEventListener('change', e => {
+  const t = e.target; const d = t.dataset;
+  if (d.rdlk) { rdlKinds()[d.rdlk] = t.checked; renderMain(); return; }
+  if (d.rsel) { UI.rsel = UI.rsel || {}; UI.rsel[d.rsel] = t.checked; renderMain(); return; }
+  if (d.rselg) { UI.rsel = UI.rsel || {}; const [gi, ...k] = d.rselg.split(':'); const g = summaryData().tables[+gi][1].find(x => x.k === k.join(':')); if (g) g.ids.forEach(id => UI.rsel[id] = t.checked); renderMain(); }
+});
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-rgroup], tr[data-rexp]'); if (!b) return;
   if (b.dataset.rgroup != null) { UI.rgroup = +b.dataset.rgroup; renderMain(); return; }
