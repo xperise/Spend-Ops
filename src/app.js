@@ -360,7 +360,7 @@ function newReq(o){
 const linesSum = (ls, k) => (ls || []).reduce((a,l) => a + (l[k] || 0), 0);
 const invNos = r => [...new Set((r.lines || []).map(l => (l.inv || '').trim()).filter(Boolean))];
 function nextCode(p){ S.seq[p] = (S.seq[p]||0) + 1; return (p==='A' ? 'SP-' : 'PB-') + String(S.seq[p]).padStart(4,'0'); }
-function submitReq(r, by, at){
+function submitReq(r, by, at, edited){
   at = at || now();
   if (!r.code) r.code = nextCode('A');
   const res = buildChain({amount:r.amount, dept:r.dept, requester:r.requester, evidence:r.evidence}, S.config);
@@ -368,7 +368,7 @@ function submitReq(r, by, at){
   const round = {no:r.rounds.length+1, at, cfgVersion:S.config.version, band:bandRange(res.band, res.rule), rule:ruleLabel(res.rule), chain};
   r.rounds.push(round);
   r.status = 'pending'; r.submittedAt = at; queueNotify('req', r.id);
-  log(r, by, round.no > 1 ? `Gửi lại lần ${round.no} sau khi bổ sung` : 'Gửi đề xuất', at);
+  log(r, by, round.no > 1 ? (edited ? `Gửi duyệt lại lần ${round.no} sau khi chỉnh sửa, bắt đầu lại từ cấp 1` : `Gửi lại lần ${round.no} sau khi bổ sung`) : 'Gửi đề xuất', at);
 }
 function act(r, by, kind, note, at, principal){
   at = at || now(); principal = principal || by;
@@ -390,6 +390,26 @@ function act(r, by, kind, note, at, principal){
   } else if (kind === 'return') {
     s.status = 'returned'; r.status = 'returned'; log(r, by, `Trả lại bổ sung${who}: ${note}`, at);
   }
+}
+/* Người đề xuất sửa phiếu đã gửi: chưa ai duyệt thì sửa và gửi lại; đã có người duyệt (kể cả đã duyệt đủ, chưa vào đợt chi)
+   thì sửa xong phiếu quay về duyệt lại từ cấp 1 trên chính phiếu đó. Mỗi lần sửa lưu bản trước/sau và danh sách thay đổi. */
+const canEditSubmitted = (r, u) => !!(r && u && r.requester === u.id && ['pending','approved'].includes(r.status) && !r.direct && !r.settleOf);
+function approvalsSoFar(r){
+  const rd = r.rounds[r.rounds.length-1]; if (!rd) return [];
+  return rd.chain.flatMap(st => Object.entries(st.decisions || {}).filter(([,d]) => d.act === 'approve').map(([p,d]) => ({step:st.label, who:p, by:d.by || p})));
+}
+function reqSnapshot(r){
+  const p = payeeOf(r);
+  return {title:r.title, amount:r.amount, dept:(dept(r.dept)||{}).name || r.dept, cat:r.cat, evidence:(EVIDENCE[r.evidence]||[r.evidence])[0], payMethod:PAYM[pmOf(r)],
+    payee:`${p.name}${p.acc && p.acc !== '—' ? ' · ' + bankFull(p.bank, p.branch) + ' ' + p.acc : ''}`, needBy:r.needBy || '', note:r.note || '',
+    lines:(r.lines || []).map(l => `${l.inv || 'chưa có số HĐ'} · ${l.desc || ''} · ${fmt(l.total)} đ`).join(' | '),
+    files:(r.files || []).map(x => fname(typeof x === 'string' ? x : x.name)).join(', '), settleDue: r.settleDue ? localDate(r.settleDue) : ''};
+}
+const SNAP_LABEL = {title:'Nội dung', amount:'Số tiền', dept:'Phòng', cat:'Hạng mục', evidence:'Chứng từ', payMethod:'Hình thức thanh toán', payee:'Người nhận', needBy:'Cần chi trước', note:'Ghi chú', lines:'Dòng hoá đơn', files:'File đính kèm', settleDue:'Hạn quyết toán'};
+function snapDiff(a, b){
+  return Object.keys(SNAP_LABEL).filter(k => String(a[k] ?? '') !== String(b[k] ?? '')).map(k => {
+    const v = x => k === 'amount' ? money(x) : k === 'needBy' || k === 'settleDue' ? (x ? dOnly(x + 'T00:00') : 'trống') : (x === '' ? 'trống' : String(x));
+    return {k, label:SNAP_LABEL[k], from:v(a[k]), to:v(b[k])}; });
 }
 function cancelReq(r, by){ r.status = 'cancelled'; log(r, by, 'Huỷ đề xuất'); }
 
@@ -549,7 +569,7 @@ const seesBatches = u => u.acct || isSigner(u.id) || u.admin;
 function go(view, id, extra){
   UI.view = view; UI.id = id || null; UI.errors = {}; UI.moreOpen = false;
   if (view === 'new') UI.form = formFrom(newReq({dept: me().dept}));
-  if (view === 'edit') UI.form = formFrom(req(id));
+  if (view === 'edit') { const r0 = req(id); if (!r0 || !(r0.status === 'draft' || r0.status === 'returned' || canEditSubmitted(r0, me()))) { toast('Phiếu này không sửa được ở trạng thái hiện tại.'); view = 'detail'; UI.view = 'detail'; } else UI.form = formFrom(r0); }
   if (view === 'config') { if (!me().admin && UI.cfgTab === 'users') UI.cfgTab = 'request'; UI.draft = {config: clone(S.config)}; UI.sim = UI.sim || {requester:'u1', dept:'OPS', amount:12000000, evidence:'vat'}; }
   if (view === 'batch') { UI.paySel = {}; UI.bpm = ''; }
   if (view === 'batches') UI.batchSel = UI.batchSel || {};
@@ -974,7 +994,10 @@ function viewForm(){
   if (r && r.status === 'returned') { const s = r.rounds[r.rounds.length-1].chain.find(x => x.status === 'returned'); const by = Object.keys(s.decisions).find(k => s.decisions[k].act === 'return'); ret = {by:s.decisions[by].by || by, note:s.decisions[by].note}; }
   const v = vendor(f.vendorId); const refund = f.type === 'refund';
   return `<button class="crumb" ${editing ? `data-open="${r.id}"` : 'data-go="list"'}>‹ ${editing ? esc(r.code||'Nháp') : 'Đề xuất chi'}</button>
-  ${head('Đề xuất chi', f.isNew ? 'Tạo đề xuất chi' : f.status === 'returned' ? 'Sửa và gửi lại' : 'Tiếp tục bản nháp', `Người đề xuất ${esc(user(editing ? r.requester : S.me).name)}`)}
+  ${head('Đề xuất chi', f.isNew ? 'Tạo đề xuất chi' : f.status === 'returned' ? 'Sửa và gửi lại' : ['pending','approved'].includes(f.status) ? `Sửa ${esc(r.code || '')}` : 'Tiếp tục bản nháp', `Người đề xuất ${esc(user(editing ? r.requester : S.me).name)}`)}
+  ${editing && ['pending','approved'].includes(f.status) ? (() => { const ok = approvalsSoFar(r); return ok.length
+    ? `<div class="alert warn" style="margin-bottom:16px"><b>Phiếu đã có ${ok.length} chữ ký:</b> ${esc(vnJoin(ok.map(x => `${x.step.toLowerCase()} ${(user(x.who)||{}).name}`)))}. Lưu thay đổi sẽ huỷ các chữ ký này và <b>gửi duyệt lại từ cấp 1</b> trên chính phiếu ${esc(r.code)}. Nội dung trước khi sửa và từng thay đổi được lưu trong lịch sử phiếu.</div>`
+    : `<div class="alert info" style="margin-bottom:16px">Chưa ai duyệt phiếu này. Sửa xong bấm gửi, phiếu quay lại cho người duyệt cấp 1. Thay đổi được lưu trong lịch sử phiếu.</div>`; })() : ''}
   ${ret ? `<div class="alert warn" style="margin-bottom:16px"><b>${esc(user(ret.by).name)} trả lại:</b> ${esc(ret.note)}<div class="small muted" style="margin-top:2px">Gửi lại mở vòng duyệt mới theo cấu hình hiện tại, lịch sử vòng trước vẫn giữ.</div></div>` : ''}
   <div class="g75 wide">
     <form class="card stack" id="reqForm" novalidate>
@@ -1024,8 +1047,8 @@ function viewForm(){
       <div class="row" style="border-top:1px solid var(--line);padding-top:16px">
         ${editing && f.status !== 'returned' ? `<button type="button" class="btn ghost" data-action="deldraft">Xoá nháp</button>` : ''}
         <span class="sp"></span>
-        ${f.status !== 'returned' ? `<button type="button" class="btn sec" data-action="savedraft">Lưu nháp</button>` : ''}
-        <button type="submit" class="btn pri">${f.status==='returned' ? 'Gửi lại để duyệt' : 'Gửi duyệt'}</button>
+        ${!['returned','pending','approved'].includes(f.status) ? `<button type="button" class="btn sec" data-action="savedraft">Lưu nháp</button>` : ''}
+        <button type="submit" class="btn pri">${f.status==='returned' ? 'Gửi lại để duyệt' : ['pending','approved'].includes(f.status) ? (editing && approvalsSoFar(r).length ? 'Lưu và duyệt lại từ đầu' : 'Lưu và gửi lại') : 'Gửi duyệt'}</button>
       </div>
     </form>
     <div class="card sticky" id="preview" style="position:sticky;top:24px"></div>
@@ -1113,6 +1136,20 @@ async function submitForm(){
   if (!(await flushUploads(f.files.map(x => x.name)))) return;
   let r = req(f.id);
   if (!r || f.isNew) { r = newReq({id:f.id, requester:S.me, lines:[]}); S.reqs.push(r); }
+  const resub = !f.isNew && ['pending','approved'].includes(r.status);
+  if (resub) {
+    if (!canEditSubmitted(r, me())) { toast('Phiếu này không còn sửa được.'); go('detail', r.id); return; }
+    const before = reqSnapshot(r); const ok = approvalsSoFar(r); const wasStatus = r.status;
+    applyForm(r, f); const after = reqSnapshot(r); const changes = snapDiff(before, after);
+    if (!changes.length) { toast('Chưa có thay đổi nào.'); return; }
+    const rd = r.rounds[r.rounds.length-1];
+    rd.closed = {at:now(), by:S.me, reason:'edited'}; rd.chain.forEach(st => { if (st.status === 'current' || st.status === 'waiting') st.status = 'superseded'; });
+    r.approvedAt = null;
+    (r.edits = r.edits || []).push({at:now(), by:S.me, round:rd.no, status:wasStatus, approvals:ok.map(x => ({step:x.step, who:x.who, by:x.by})), before, after, changes});
+    log(r, S.me, `Sửa phiếu ${ok.length ? `sau khi đã có ${ok.length} chữ ký (${vnJoin(ok.map(x => x.step.toLowerCase() + ' ' + (user(x.who)||{}).name))}), huỷ chữ ký cũ và duyệt lại từ đầu` : 'khi chưa ai duyệt'}. Thay đổi: ${changes.map(c => `${c.label}: ${c.from} → ${c.to}`).join('; ')}`);
+    submitReq(r, S.me, null, true);
+    save(); toast(ok.length ? `Đã lưu thay đổi, ${r.code} quay lại duyệt từ ${currentStep(r).label.toLowerCase()}` : `Đã lưu và gửi lại ${r.code}`); go('detail', r.id); return;
+  }
   applyForm(r, f);
   if (f.status === 'returned') log(r, S.me, 'Sửa nội dung theo yêu cầu bổ sung');
   submitReq(r, S.me);
@@ -1211,8 +1248,10 @@ function viewDetail(){
   else if (mine && (r.status === 'returned' || r.status === 'draft')) actions = `<div class="alert warn"><b>${r.status==='returned'?'Phiếu cần bạn bổ sung.':'Bản nháp chưa gửi.'}</b> ${r.status==='returned'?'Sửa theo ghi chú của người duyệt rồi gửi lại.':'Hoàn thiện rồi gửi để bắt đầu duyệt.'}
       <div class="row" style="margin-top:10px"><button class="btn pri sm" data-go="edit" data-id="${r.id}">${r.status==='returned'?'Sửa và gửi lại':'Tiếp tục soạn'}</button></div></div>`;
   else if (r.status === 'pending' && s && Object.values(s.decisions).some(d => d.by === u.id)) actions = `<div class="alert ok">Bạn đã duyệt bước này.${s.mode==='all'?' Đang chờ những người còn lại.':''}</div>`;
-  else if (r.status === 'pending' && mine) actions = `<div class="alert info">Đang chờ ${esc(vnJoin(waitingOn(r).map(id=>user(id).name), s.mode==='all'?' và ':' hoặc '))} duyệt ${esc(s.label.toLowerCase())}.</div>`;
-  else if (r.status === 'approved') actions = `<div class="alert ok">Đã đủ chữ ký, đang chờ thanh toán. ${u.acct ? '<button class="linkbtn" data-go="batches">Đưa vào đợt chi</button>' : 'Kế toán sẽ lập đợt chi và hẹn ngày thanh toán.'}</div>`;
+  else if (r.status === 'pending' && mine) actions = `<div class="alert info">Đang chờ ${esc(vnJoin(waitingOn(r).map(id=>user(id).name), s.mode==='all'?' và ':' hoặc '))} duyệt ${esc(s.label.toLowerCase())}.
+      ${canEditSubmitted(r, u) ? `<div class="row" style="margin-top:10px"><button class="btn sec sm" data-go="edit" data-id="${r.id}">${icon('edit',14)} Sửa phiếu</button><span class="small faint">${approvalsSoFar(r).length ? 'Đã có người duyệt: sửa xong phiếu sẽ duyệt lại từ cấp 1.' : 'Chưa ai duyệt, sửa thoải mái rồi gửi lại.'}</span></div>` : ''}</div>`;
+  else if (r.status === 'approved') actions = `<div class="alert ok">Đã đủ chữ ký, đang chờ thanh toán. ${u.acct ? '<button class="linkbtn" data-go="batches">Đưa vào đợt chi</button>' : 'Kế toán sẽ lập đợt chi và hẹn ngày thanh toán.'}
+      ${canEditSubmitted(r, u) ? `<div class="row" style="margin-top:10px"><button class="btn sec sm" data-go="edit" data-id="${r.id}">${icon('edit',14)} Sửa phiếu</button><span class="small faint">Sửa xong phiếu phải duyệt lại từ cấp 1.</span></div>` : ''}</div>`;
   else if (r.status === 'in_batch' && b) actions = `<div class="alert info">Trong đợt ${esc(b.code)}, <b>hẹn thanh toán ${dOnly(b.payDate+'T00:00')}</b> (${dueText(b.payDate)}). ${esc(batchNext(b).split(',')[0])}. ${seesBatches(u) ? `<button class="linkbtn" data-batch="${b.id}">Mở đợt chi</button>` : ''}</div>`;
   else if (r.status === 'cancelled') actions = `<div class="alert neg"><b>Lệnh đã huỷ${r.cancelledBy ? ' bởi ' + esc(user(r.cancelledBy).name) : ''}.</b> ${esc(r.cancelReason || '')}</div>`;
   const adv = advState(r);
@@ -1256,13 +1295,17 @@ function viewDetail(){
         <div class="sect"><b class="small">Chứng từ đính kèm</b><div class="chips" style="margin-top:8px">${r.files.length ? fileChips(r.files) : '<span class="small faint">Chưa có file</span>'}</div></div>
         ${r.unc && r.unc.length ? `<div class="sect"><b class="small">UNC, bằng chứng đã chi</b><div class="chips" style="margin-top:8px">${fileChips(r.unc, true, r)}</div><div class="small faint" style="margin-top:6px">Bấm mũi tên trên file để tải về.</div></div>` : ''}
       </div>
+      ${(r.edits || []).length ? `<div class="card"><div class="ch"><h2 class="card-title">Lịch sử chỉnh sửa</h2><span class="card-note">${r.edits.length} lần sửa sau khi gửi</span></div>
+        <div class="stack" style="gap:14px">${[...r.edits].reverse().map((ed, k) => `<div>
+          <div class="small"><b>Lần ${r.edits.length - k}</b> · ${esc((user(ed.by)||{}).name || '')} · ${dt(ed.at)} · ${ed.approvals.length ? `huỷ ${ed.approvals.length} chữ ký (${esc(vnJoin(ed.approvals.map(x => x.step.toLowerCase() + ' ' + ((user(x.who)||{}).name || ''))))}), duyệt lại từ cấp 1` : 'khi chưa ai duyệt'}</div>
+          <div class="tw" style="margin-top:6px"><table><thead><tr><th>Thông tin</th><th>Trước</th><th>Sau</th></tr></thead><tbody>${ed.changes.map(c => `<tr><td class="small">${esc(c.label)}</td><td class="small faint" style="text-decoration:line-through">${esc(c.from)}</td><td class="small">${esc(c.to)}</td></tr>`).join('')}</tbody></table></div></div>`).join('')}</div></div>` : ''}
       <div class="card"><div class="ch"><h2 class="card-title">Nhật ký</h2><span class="card-note">${r.log.length} sự kiện</span></div>
         ${[...r.log].reverse().map(l => `<div class="li">${l.by ? avatar(l.by,'xs') : '<span class="av xs" aria-hidden="true">·</span>'}<div class="grow small"><b style="font-weight:500">${l.by?esc(user(l.by).name):'Hệ thống'}</b> <span class="muted">${esc(l.text)}</span></div><span class="small faint">${dt(l.at)}</span></div>`).join('')}
         <div class="row" style="margin-top:14px"><input class="in" id="cmt" placeholder="Viết bình luận" style="flex:1" aria-label="Bình luận"><button class="btn sec" data-action="comment">Gửi</button></div>
       </div>
     </div>
     <div class="stack">
-      ${rounds.length ? rounds.map((rd,i) => `<div class="card" ${i?'style="opacity:.75"':''}><div class="ch"><h2 class="card-title">${i===0?'Tiến trình':'Vòng '+rd.no+' trước đó'}</h2><span class="card-note">${rounds.length>1&&i===0?`Vòng ${rd.no} · `:''}${rd.rule ? esc(rd.rule) + ' · ' : ''}${esc(rd.band)} · v${rd.cfgVersion}</span></div>
+      ${rounds.length ? rounds.map((rd,i) => `<div class="card" ${i?'style="opacity:.75"':''}><div class="ch"><h2 class="card-title">${i===0?'Tiến trình':'Vòng '+rd.no+' trước đó'}</h2><span class="card-note">${rounds.length>1&&i===0?`Vòng ${rd.no} · `:''}${rd.rule ? esc(rd.rule) + ' · ' : ''}${esc(rd.band)} · v${rd.cfgVersion}${rd.closed && rd.closed.reason === 'edited' ? ` · dừng do ${esc((user(rd.closed.by)||{}).name || '')} sửa phiếu ${dt(rd.closed.at)}` : ''}</span></div>
         ${chainHtml(rd.chain)}${i===0 ? payStep : ''}</div>`).join('')
       : `<div class="card"><div class="ch"><h2 class="card-title">Tiến trình</h2></div>${r.direct ? `<p class="small faint" style="margin:0">Kế toán lập trực tiếp, không qua chuỗi duyệt đề xuất. Người duyệt đợt chi là chốt duyệt duy nhất.</p>${payStep}` : '<p class="small faint" style="margin:0">Phiếu chưa gửi nên chưa có chuỗi duyệt.</p>'}</div>`}
     </div>
