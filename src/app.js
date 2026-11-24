@@ -601,8 +601,8 @@ function roleLine(u){
 function renderSide(){
   document.body.classList.remove('auth');
   const u = me();
-  const inbox = inboxFor(u.id).length;
-  const bcount = (u.acct ? S.reqs.filter(r => r.status === 'approved').length + batchesToPay().length : 0) + batchesToApprove(u.id).length;
+  const inbox = inboxFor(u.id).length + batchesToApprove(u.id).length;
+  const bcount = u.acct ? S.reqs.filter(r => r.status === 'approved' && queueOpen(r)).length + batchesToPay().length : 0;
   const nav = [
     ['home','home','Tổng quan',0],
     ['list','file','Đề xuất chi',0],
@@ -1200,24 +1200,80 @@ function parsePaste(text){
 }
 
 /* ===================== Chờ tôi duyệt ===================== */
+/* Chờ tôi duyệt: gộp đề xuất chi và đợt chi chờ người dùng duyệt trên một màn hình, lọc theo loại, mở rộng để xem chi tiết. */
 function viewInbox(){
-  const u = me(); const items = inboxFor(u.id).sort((a,b) => a.submittedAt - b.submittedAt);
-  const sel = items.filter(r => UI.inboxSel[r.id]);
-  return `${head('Phê duyệt','Chờ tôi duyệt', items.length ? `${items.length} khoản, ${short(items.reduce((a,r)=>a+r.amount,0))}, cũ nhất ở trên.` : '',
-    items.length ? `<div class="row"><button class="btn sec" data-action="selall">${sel.length === items.length ? 'Bỏ chọn' : 'Chọn tất cả'}</button><button class="btn pri" data-action="bulk" ${sel.length?'':'disabled'}>${sel.length ? `Duyệt ${sel.length} khoản` : 'Duyệt khoản đã chọn'}</button></div>` : '')}
-  ${items.length ? `<div class="card">${items.map(r => { const s = currentStep(r); const rd = r.rounds[r.rounds.length-1];
-    const p = actorsFor(r, u.id)[0];
+  const u = me(); const tab = UI.inboxTab || 'all'; UI.inboxOpen = UI.inboxOpen || {};
+  const reqs = inboxFor(u.id).sort((a,b) => a.submittedAt - b.submittedAt);
+  const bats = batchesToApprove(u.id).sort((a,b) => a.createdAt - b.createdAt);
+  const btotal = b => b.reqIds.reduce((a,id) => a + req(id).amount, 0);
+  const items = [...(tab !== 'batch' ? reqs.map(r => ({k:'req', r, t:r.submittedAt})) : []), ...(tab !== 'req' ? bats.map(b => ({k:'batch', b, t:b.createdAt})) : [])].sort((a,b) => a.t - b.t);
+  const sel = reqs.filter(r => UI.inboxSel[r.id]);
+  const sumAll = reqs.reduce((a,r)=>a+r.amount,0) + bats.reduce((a,b)=>a+btotal(b),0);
+  const seg = [['all','Tất cả', reqs.length + bats.length], ['req','Duyệt đề xuất', reqs.length], ['batch','Duyệt đợt chi', bats.length]];
+  const reqRow = (r, i) => { const s = currentStep(r); const rd = r.rounds[r.rounds.length-1]; const p = actorsFor(r, u.id)[0]; const open = !!UI.inboxOpen[r.id];
     const others = s.approvers.filter(id => id !== u.id && id !== p);
-    const meta = [r.code, user(r.requester).name, dept(r.dept).name, s.label, rd.no>1 ? `vòng ${rd.no}` : '', r.evidence==='bill' ? 'không hoá đơn' : r.evidence==='later' ? 'chưa có hoá đơn' : r.evidence==='advance' ? 'tạm ứng' : '', PAYM[pmOf(r)], 'lập ' + dt(r.createdAt)].filter(Boolean).join(' · ');
-    return `<div class="li">
-      <span class="faint small num" style="width:18px;text-align:right">${items.indexOf(r)+1}</span><input type="checkbox" class="cb" aria-label="Chọn ${esc(r.code)}" data-sel="${r.id}" ${UI.inboxSel[r.id]?'checked':''}>
-      <div class="grow"><div class="t">${esc(r.title)}</div><div class="m">${esc(meta)}</div>${p !== u.id ? `<div class="m deleg">Duyệt thay ${esc(user(p).name)}</div>` : ''}
-        ${others.length ? `<div class="m">${s.mode==='all' ? 'Cần thêm chữ ký của ' : 'Cùng nhận, một người duyệt là đủ: '}${esc(vnJoin(others.map(id => user(id).name)))}</div>` : ''}</div>
+    const meta = [r.code, user(r.requester).name, dept(r.dept).name, s.label, rd.no>1 ? `vòng ${rd.no}` : '', r.evidence==='bill' ? 'không hoá đơn' : r.evidence==='later' ? 'chưa có hoá đơn' : r.evidence==='advance' ? 'tạm ứng' : '', PAYM[pmOf(r)], 'gửi ' + dt(r.submittedAt)].filter(Boolean).join(' · ');
+    return `<div class="li ibx">
+      <span class="faint small num" style="width:18px;text-align:right">${i+1}</span><input type="checkbox" class="cb" aria-label="Chọn ${esc(r.code)}" data-sel="${r.id}" ${UI.inboxSel[r.id]?'checked':''}>
+      <div class="grow"><div class="t"><span class="kind req">Đề xuất</span> ${esc(r.title)}</div><div class="m">${esc(meta)}</div>${p !== u.id ? `<div class="m deleg">Duyệt thay ${esc(user(p).name)}</div>` : ''}
+        ${others.length ? `<div class="m">${s.mode==='all' ? 'Cần thêm chữ ký của ' : 'Cùng nhận, một người duyệt là đủ: '}${esc(vnJoin(others.map(id => user(id).name), s.mode==='all' ? ' và ' : ' hoặc '))}</div>` : ''}</div>
       <span class="amt">${money(r.amount)}</span>
-      <button class="btn ghost sm" data-open="${r.id}">Xem</button><button class="btn sec sm" data-quick="${r.id}">Duyệt</button></div>`; }).join('')}</div>`
-  : `<div class="card empty"><b>Không có khoản nào chờ bạn</b>${inConfig(u.id) || principalsOf(u.id).length ? 'Khi một đề xuất tới lượt bạn, nó xuất hiện ở đây.' : 'Vai này không có bước duyệt nào. Đổi sang Lê Thu Hà để duyệt.'}</div>`}`;
+      <button class="btn ghost sm" data-iopen="${r.id}" aria-expanded="${open}">${open ? 'Thu gọn' : 'Chi tiết'}</button><button class="btn sec sm" data-quick="${r.id}">Duyệt</button></div>
+      ${open ? reqPeek(r) : ''}`; };
+  const batRow = (b, i) => { const s = currentBatchStep(b); const ch = ensureBatchChain(b); const acts = batchActors(b, u.id); const p = acts[0]; const open = !!UI.inboxOpen[b.id];
+    const others = s.approvers.filter(id => id !== u.id && id !== p && !s.decisions[id]);
+    const meta = [b.code, `${b.reqIds.length} khoản`, `kế toán ${user(b.createdBy).name}`, `hẹn chi ${dOnly(b.payDate + 'T00:00')} (${dueText(b.payDate)})`, ch.length > 1 ? `cấp ${ch.indexOf(s)+1}/${ch.length}` : s.label, 'lập ' + dt(b.createdAt)].join(' · ');
+    return `<div class="li ibx">
+      <span class="faint small num" style="width:18px;text-align:right">${i+1}</span><span class="cb-sp" aria-hidden="true"></span>
+      <div class="grow"><div class="t"><span class="kind batch">Đợt chi</span> Đợt ${esc(b.code)}: ${b.reqIds.length} khoản chi</div><div class="m">${esc(meta)}</div>${p !== u.id ? `<div class="m deleg">Duyệt thay ${esc(user(p).name)}</div>` : ''}
+        ${others.length ? `<div class="m">${s.mode==='all' ? 'Cần thêm chữ ký của ' : 'Cùng nhận, một người duyệt là đủ: '}${esc(vnJoin(others.map(id => user(id).name), s.mode==='all' ? ' và ' : ' hoặc '))}</div>` : ''}</div>
+      <span class="amt">${money(btotal(b))}</span>
+      <button class="btn ghost sm" data-iopen="${b.id}" aria-expanded="${open}">${open ? 'Thu gọn' : 'Chi tiết'}</button><button class="btn sec sm" data-bquick="${b.id}">Duyệt</button></div>
+      ${open ? batchPeek(b, acts) : ''}`; };
+  return `${head('Phê duyệt','Chờ tôi duyệt', reqs.length + bats.length ? `${reqs.length} đề xuất, ${bats.length} đợt chi, tổng ${short(sumAll)}. Cũ nhất ở trên.` : '',
+    reqs.length && tab !== 'batch' ? `<div class="row"><button class="btn sec" data-action="selall">${sel.length === reqs.length ? 'Bỏ chọn' : 'Chọn tất cả đề xuất'}</button><button class="btn pri" data-action="bulk" ${sel.length?'':'disabled'}>${sel.length ? `Duyệt ${sel.length} đề xuất` : 'Duyệt đề xuất đã chọn'}</button></div>` : '')}
+  <div class="tabs" role="tablist" style="margin-bottom:14px">${seg.map(([k,l,n]) => `<button role="tab" class="${tab===k?'on':''}" aria-selected="${tab===k}" data-itab="${k}">${l}<span class="c">${n}</span></button>`).join('')}</div>
+  ${items.length ? `<div class="card">${items.map((x,i) => x.k === 'req' ? reqRow(x.r, i) : batRow(x.b, i)).join('')}</div>`
+  : `<div class="card empty"><b>${tab === 'batch' ? 'Không có đợt chi nào chờ bạn' : tab === 'req' ? 'Không có đề xuất nào chờ bạn' : 'Không có khoản nào chờ bạn'}</b>${inConfig(u.id) || principalsOf(u.id).length || isSigner(u.id) ? 'Khi một đề xuất hoặc đợt chi tới lượt bạn, nó xuất hiện ở đây.' : 'Bạn chưa được giao bước duyệt nào.'}</div>`}`;
 }
-
+function reqPeek(r){
+  const p = payeeOf(r); const sum = linesSum(r.lines, 'total');
+  return `<div class="peek">
+    <div class="kv">
+      <div><span>Thanh toán cho</span><b>${esc(p.name)}</b>${p.acc && p.acc !== '—' ? `<div class="small faint">${esc(bankFull(p.bank, p.branch))} ${esc(p.acc)}</div>` : ''}</div>
+      <div><span>Hạng mục</span><b>${esc(r.cat)}</b><div class="small faint">${esc(catGroup(r.cat) || '')}</div></div>
+      <div><span>Chứng từ</span><b>${esc((EVIDENCE[r.evidence]||[r.evidence])[0])}</b></div>
+      <div><span>Cần chi trước</span><b>${r.needBy ? dOnly(r.needBy + 'T00:00') : 'Không yêu cầu'}</b></div>
+    </div>
+    ${r.note ? `<div class="pnote" style="margin:10px 0 0">${esc(r.note)}</div>` : ''}
+    ${(r.lines || []).length ? `<div class="tw" style="margin-top:12px"><table><thead><tr><th>Số HĐ</th><th>Diễn giải</th><th class="r">Thuế suất</th><th class="r">Thành tiền (đ)</th></tr></thead><tbody>${r.lines.map(l => `<tr><td class="small">${esc(l.inv || 'Chưa có')}</td><td class="small">${esc(l.desc || '')}</td><td class="r small">${esc(RATES[l.rate] || l.rate || '')}</td><td class="r">${fmt(l.total)}</td></tr>`).join('')}</tbody>${r.lines.length > 1 ? `<tfoot><tr><td></td><td>Tổng</td><td></td><td class="r">${fmt(sum)}</td></tr></tfoot>` : ''}</table></div>` : ''}
+    ${(r.files || []).length ? `<div class="chips" style="margin-top:12px">${fileChips(r.files, true, r)}</div>` : ''}
+    ${(r.edits || []).length ? `<div class="alert warn" style="margin-top:12px">Người đề xuất đã sửa phiếu ${r.edits.length} lần sau khi gửi, lần gần nhất ${dt(r.edits[r.edits.length-1].at)}: ${esc(r.edits[r.edits.length-1].changes.map(c => c.label).join(', '))}.</div>` : ''}
+    <div class="row" style="margin-top:12px"><button class="btn sec sm" data-open="${r.id}">Mở phiếu để duyệt, trả lại hoặc từ chối</button></div>
+  </div>`;
+}
+function batchPeek(b, acts){
+  const u = me(); const E = UI.errors || {};
+  return `<div class="peek">
+    <div class="small muted" style="margin-bottom:8px">${esc(batchChainText(b))}</div>
+    <div class="tw"><table><thead><tr><th>Mã</th><th>Nội dung</th><th>Người nhận</th><th>Hạng mục</th><th>Chứng từ</th><th class="r">Số tiền (đ)</th></tr></thead><tbody>
+      ${b.reqIds.map(id => { const r = req(id), p = payeeOf(r); return `<tr class="click" data-open="${r.id}" tabindex="0"><td class="code">${esc(r.code)}</td><td><div class="ttl">${esc(r.title)}</div><div class="small faint">${esc(user(r.requester).name)} · ${esc(dept(r.dept).name)}</div></td><td class="small">${esc(p.name)}<div class="faint">${esc(bankFull(p.bank, p.branch))} ${esc(p.acc || '')}</div></td><td class="small">${esc(r.cat)}</td><td class="small">${esc((EVIDENCE[r.evidence]||[r.evidence])[0])}</td><td class="r">${fmt(r.amount)}</td></tr>`; }).join('')}
+    </tbody><tfoot><tr><td></td><td>Tổng</td><td></td><td></td><td></td><td class="r">${fmt(b.reqIds.reduce((a,id) => a + req(id).amount, 0))}</td></tr></tfoot></table></div>
+    <label class="f" style="margin-top:12px">Ghi chú<textarea class="in ${E.bnote?'err':''}" id="bNote" placeholder="Bắt buộc khi trả lại kế toán"></textarea>${E.bnote?`<span class="ferr">${E.bnote}</span>`:''}</label>
+    ${acts.length > 1 ? `<label class="f" style="margin-top:12px">Duyệt với tư cách<select class="in" id="bAs">${acts.map(a => `<option value="${a}">${a === u.id ? 'Chính tôi' : 'Duyệt thay ' + esc(user(a).name)}</option>`).join('')}</select></label>` : `<input type="hidden" id="bAs" value="${acts[0]}">`}
+    <div class="row" style="margin-top:12px"><button class="btn pri sm" data-bapprove="${b.id}">Duyệt đợt chi</button><button class="btn sec sm" data-breturn="${b.id}">Trả lại kế toán</button><span class="sp"></span><button class="btn ghost sm" data-batch="${b.id}">Mở trang đợt chi</button></div>
+  </div>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-itab], [data-iopen], [data-bquick]'); if (!b) return; const d = b.dataset;
+  if (d.itab) { UI.inboxTab = d.itab; renderMain(); return; }
+  if (d.iopen) { UI.inboxOpen = UI.inboxOpen || {}; const isBatch = !!batch(d.iopen); const was = !!UI.inboxOpen[d.iopen];
+    if (isBatch) S.batches.forEach(x => delete UI.inboxOpen[x.id]);   // mỗi lúc mở một đợt (ô ghi chú dùng chung)
+    UI.inboxOpen[d.iopen] = !was; UI.errors = {}; renderMain(); return; }
+  if (d.bquick) { const bt = batch(d.bquick); const acts = batchActors(bt, S.me); if (!acts.length) return;
+    approveBatch(bt, S.me, '', null, acts[0]); S.guideDone.sign = true; save();
+    toast(bt.status === 'approved' ? `Đã duyệt ${bt.code}, kế toán có thể chuyển tiền` : `Đã duyệt bước của ${bt.code}, chờ người duyệt tiếp theo`); render(); }
+});
 
 /* ===================== Chi tiết đề xuất ===================== */
 function chainHtml(chain, preview){
