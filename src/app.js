@@ -565,9 +565,26 @@ function visibleReqs(){
 }
 const inboxFor = id => S.reqs.filter(r => canAct(r, id));
 const seesBatches = u => u.acct || isSigner(u.id) || u.admin;
+/* Phân quyền theo vai: người chỉ đề xuất (không nằm trong luồng duyệt, không có quyền gì) chỉ thấy phiếu của mình. */
+const isApprover = u => !!u && (inConfig(u.id) || isSigner(u.id) || principalsOf(u.id).length > 0 || inboxFor(u.id).length > 0 || batchesToApprove(u.id).length > 0);
+const canDelegateTab = u => !!u && (u.admin || inConfig(u.id) || isSigner(u.id) || principalsOf(u.id).length > 0);
+const canReports = u => !!u && (canSeeAll(u) || u.cfg || u.master || inConfig(u.id) || principalsOf(u.id).length > 0);
+function canOpenView(view, u, id){
+  if (['home','list','new','edit','profile'].includes(view)) return true;
+  if (view === 'detail') { const r = req(id); return !r || visibleReqs().includes(r); }
+  if (view === 'inbox') return isApprover(u);
+  if (view === 'delegate') return canDelegateTab(u);
+  if (view === 'reports' || view === 'dash') return canReports(u);
+  if (view === 'batches') return seesBatches(u);
+  if (view === 'batch') { const b = batch(id); return seesBatches(u) || (b && (canApproveBatch(b, u.id) || ensureBatchChain(b).some(st => st.approvers.includes(u.id) || Object.values(st.decisions || {}).some(d => d.by === u.id)))); }
+  if (view === 'master') return canMaster(u);
+  if (view === 'config' || view === 'users') return canCfg(u);
+  return true;
+}
 
 /* ===================== Điều hướng ===================== */
 function go(view, id, extra){
+  if (S && me() && !canOpenView(view, me(), id)) { toast('Bạn không có quyền mở mục này.'); view = 'home'; id = null; }
   UI.view = view; UI.id = id || null; UI.errors = {}; UI.moreOpen = false;
   if (view === 'new') UI.form = formFrom(newReq({dept: me().dept}));
   if (view === 'edit') { const r0 = req(id); if (!r0 || !(r0.status === 'draft' || r0.status === 'returned' || canEditSubmitted(r0, me()))) { toast('Phiếu này không sửa được ở trạng thái hiện tại.'); view = 'detail'; UI.view = 'detail'; } else UI.form = formFrom(r0); }
@@ -607,10 +624,10 @@ function renderSide(){
   const nav = [
     ['home','home','Tổng quan',0],
     ['list','file','Đề xuất chi',0],
-    ['inbox','check','Chờ tôi duyệt',inbox],
+    ...(isApprover(u) ? [['inbox','check','Chờ tôi duyệt',inbox]] : []),
     ...(seesBatches(u) ? [['batches','wallet','Đợt chi',bcount]] : []),
-    ['delegate','swap','Ủy quyền duyệt',0],
-    ['reports','chart','Báo cáo',0],
+    ...(canDelegateTab(u) ? [['delegate','swap','Ủy quyền duyệt',0]] : []),
+    ...(canReports(u) ? [['reports','chart','Báo cáo',0]] : []),
     ...(canMaster(u) ? [['master','file','Master Data',0]] : []),
     ...(canCfg(u) ? [['config','gear','Cấu hình',0]] : [])
   ];
@@ -664,6 +681,7 @@ function cardify(){
 let cardTimer = null;
 new MutationObserver(() => { if (cardTimer) return; cardTimer = requestAnimationFrame(() => { cardTimer = null; cardify(); }); }).observe(document.body, {childList:true, subtree:true});
 function renderMain(){
+  if (me() && !canOpenView(UI.view, me(), UI.id)) { UI.view = 'home'; UI.id = null; }
   const v = UI.view; const m = $('#main');
   const views = {home:viewHome, list:viewList, inbox:viewInbox, new:viewForm, edit:viewForm, detail:viewDetail, batches:viewBatches, batch:viewBatch, delegate:viewDelegate, profile:viewProfile, reports:viewReports, master:() => canMaster(me()) ? viewMaster() : `<div class="card empty"><b>Chỉ người có quyền Master Data mở được mục này</b></div>`, dash:() => canDash(me()) ? (UI.rtab = 'dash', viewReports()) : `<div class="card empty"><b>Chỉ người được phân quyền mới xem được dashboard</b>Nhờ quản trị bật quyền “Dashboard quản trị” cho bạn.</div>`, users:() => me().admin ? (UI.cfgTab = 'users', viewConfig()) : `<div class="card empty"><b>Chỉ Quản trị quản lý người dùng</b></div>`, config:() => canCfg(me()) ? viewConfig() : `<div class="card empty"><b>Chỉ Quản trị và Kế toán mở được cấu hình</b>Đổi vai sang Quản trị hệ thống ở góc trái.</div>`};
   m.innerHTML = (views[v] || viewHome)();
@@ -695,13 +713,15 @@ function viewHome(){
   const paidMonth = S.reqs.filter(r => r.status === 'paid' && new Date(r.paidAt).getMonth() === new Date().getMonth());
   const k = (go, l, v, s, act) => `<button class="kpi ${act?'act':''}" data-go="${go}"><span class="l">${l}</span><span class="v">${v}</span><span class="s">${s}</span></button>`;
   const kpis = [
-    k('inbox','Chờ tôi duyệt', inbox.length, inbox.length ? short(sum(inbox)) : 'Không có', inbox.length),
+    ...(isApprover(u) ? [k('inbox','Chờ tôi duyệt', inbox.length + toApprove.length, inbox.length || toApprove.length ? short(sum(inbox) + toApprove.reduce((a,b)=>a+batchTotal(b),0)) : 'Không có', inbox.length || toApprove.length)] : []),
     k('list','Phiếu của tôi đang xử lý', minePending.length, minePending.length ? short(sum(minePending)) : 'Không có', false),
     k('list','Cần tôi sửa hoặc gửi', mineFix.length, mineFix.length ? 'Nháp, phiếu trả lại' : 'Không có', mineFix.length)
   ];
   if (u.acct) kpis.push(k('batches','Chờ thanh toán / đợt cần chi', `${approved.length} / ${toPay.length}`, `${short(sum(approved))} chờ thanh toán`, approved.length || toPay.length));
   else if (isSigner(u.id) || toApprove.length) kpis.push(k('batches','Đợt chi chờ tôi duyệt', toApprove.length, toApprove.length ? short(toApprove.reduce((a,b)=>a+batchTotal(b),0)) : 'Không có', toApprove.length));
-  else kpis.push(`<div class="kpi static"><span class="l">Công ty đã chi tháng này</span><span class="v">${paidMonth.length}</span><span class="s">${short(sum(paidMonth))}</span></div>`);
+  else if (canSeeAll(u)) kpis.push(`<div class="kpi static"><span class="l">Công ty đã chi tháng này</span><span class="v">${paidMonth.length}</span><span class="s">${short(sum(paidMonth))}</span></div>`);
+  else { const myPaid = mine.filter(r => r.status === 'paid' && new Date(r.paidAt).getMonth() === new Date().getMonth() && new Date(r.paidAt).getFullYear() === new Date().getFullYear());
+    kpis.push(k('list','Phiếu của tôi đã chi tháng này', myPaid.length, myPaid.length ? short(sum(myPaid)) : 'Không có', false)); }
 
   const todo = [];
   inbox.forEach(r => { const p = actorsFor(r, u.id)[0]; todo.push({open:r.id, t:r.title, m:`${r.code} · ${p !== u.id ? 'duyệt thay ' + user(p).name : 'chờ bạn duyệt'} ${currentStep(r).label.toLowerCase()}`, a:r.amount}); });
@@ -740,7 +760,7 @@ function viewHome(){
       <div class="card"><div class="ch"><h2 class="card-title">Việc cần làm</h2><span class="card-note">${todo.length ? todo.length + ' việc' : ''}</span></div>
         ${todo.length ? todo.map(x => `<div class="li click" ${x.open?`data-open="${x.open}"`:x.batch?`data-batch="${x.batch}"`:`data-go="${x.go}"`} role="button" tabindex="0">
           <div class="grow"><div class="t">${esc(x.t)}</div><div class="m" ${x.hot ? 'style="color:var(--watch)"' : ''}>${esc(x.m)}</div></div><span class="amt">${short(x.a)}</span></div>`).join('')
-        : `<div class="empty"><b>Không có việc nào chờ bạn</b>Đổi vai ở góc trái để xem luồng từ phía người khác.</div>`}
+        : `<div class="empty"><b>Không có việc nào chờ bạn</b>Khi có phiếu cần bạn sửa, bổ sung hoặc duyệt, nó xuất hiện ở đây.</div>`}
       </div>
           </div>
     ${calendarCard(u)}
