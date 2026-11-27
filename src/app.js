@@ -980,7 +980,7 @@ function linesTable(f){
 function vendorMatches(q){ q = noAccent(q || '').toLowerCase().trim(); if (!q) return [];
   return S.vendors.filter(x => !x.deleted && noAccent([x.name, x.tax, x.acc, x.accName, x.bank].join(' ')).toLowerCase().includes(q)); }
 function vendorResults(){ const q = UI.vq || ''; if (!q.trim()) return ''; const m = vendorMatches(q);
-  return m.length ? `<div class="vlist">${m.slice(0,6).map(x => `<button type="button" data-vpick="${x.id}"><b>${esc(x.name)}</b><span>${x.tax ? 'MST ' + esc(x.tax) + ' · ' : ''}${esc(bankFull(x.bank, x.branch))} ${esc(x.acc)}${x.verified ? '' : ' · chưa xác minh'}</span></button>`).join('')}${m.length > 6 ? `<div class="small faint" style="padding:6px 10px">Còn ${m.length-6} kết quả, gõ thêm để thu hẹp.</div>` : ''}</div>`
+  return m.length ? `<div class="vlist">${m.slice(0,6).map(x => `<button type="button" data-vpick="${x.id}"><b>${esc(x.name)}</b><span>${x.tax ? 'MST ' + esc(x.tax) + ' · ' : ''}${vendorHasAcc(x) ? `${esc(bankFull(x.bank, x.branch))} ${esc(x.acc)}${x.verified ? '' : ' · chưa xác minh'}` : '<b style="color:var(--critical)">Chưa có STK</b>'}</span></button>`).join('')}${m.length > 6 ? `<div class="small faint" style="padding:6px 10px">Còn ${m.length-6} kết quả, gõ thêm để thu hẹp.</div>` : ''}</div>`
     : `<div class="small faint" style="padding:6px 2px">Không tìm thấy “${esc(q)}”. Bấm “NCC mới” để thêm.</div>`; }
 function amountHint(f){ const sum = linesSum(f.lines,'total');
   if (f.type === 'refund') return f.amount ? short(f.amount) : '';
@@ -1031,7 +1031,10 @@ function viewForm(){
           ? `<div class="f full"><span class="flabel">Nhà cung cấp</span><input type="hidden" name="vendorId" value="${esc(f.vendorId)}">
               ${v ? `<div class="vsel"><div><b>${esc(v.name)}</b><div class="small faint">${v.tax ? 'MST ' + esc(v.tax) + ' · ' : ''}${esc(bankFull(v.bank, v.branch))} ${esc(v.acc)} · ${esc(v.accName || '')}</div></div>${v.verified ? '<span class="pill st-approved">STK đã xác minh</span>' : '<span class="pill st-returned">STK chưa xác minh</span>'}</div>` : ''}
               <div class="row" style="flex-wrap:nowrap"><input class="in" type="search" data-vq placeholder="Tìm nhà cung cấp khác theo tên, MST hoặc số tài khoản" value="${esc(UI.vq||'')}" autocomplete="off" aria-label="Tìm nhà cung cấp"><button type="button" class="btn sec" data-action="newvendor">${icon('plus',16)} NCC mới</button></div>
-              <div id="vres">${vendorResults()}</div>${v && !v.verified ? '<span class="hint">STK chưa xác minh: vẫn gửi duyệt được, kế toán xác minh trước khi đưa vào đợt chi.</span>' : ''}</div>`
+              <div id="vres">${vendorResults()}</div>
+              ${E.vendor ? `<div class="alert neg" style="margin-top:8px">${esc(E.vendor)}${v && !vendorHasAcc(v) ? ` <button type="button" class="btn sec sm" data-vfix="${v.id}">Bổ sung STK</button>` : ''}</div>`
+                : v && !vendorHasAcc(v) ? `<div class="alert warn" style="margin-top:8px">${esc(v.name)} chưa có số tài khoản, bắt buộc bổ sung trước khi gửi. <button type="button" class="btn sec sm" data-vfix="${v.id}">Bổ sung STK</button></div>`
+                : v && !v.verified ? '<span class="hint">STK chưa xác minh: vẫn gửi duyệt được, kế toán xác minh trước khi đưa vào đợt chi.</span>' : '<span class="hint">Bắt buộc chọn NCC có số tài khoản nhận tiền.</span>'}</div>`
           : `${meBankCard(E)}<label class="f full">Tôi đã trả bằng<select class="in ${E.outlay?'err':''}" name="outlay">${Object.entries(OUTLAY).map(([k,x]) => `<option value="${k}" ${f.outlay===k?'selected':''}>${x}</option>`).join('')}</select>${E.outlay?`<span class="ferr">${E.outlay}</span>`:''}</label>`}
         <div class="f full"><span class="flabel">Chứng từ hiện có</span>
           <div class="choice five" role="radiogroup" aria-label="Chứng từ">${Object.entries(EVIDENCE).map(([k,x]) => `<label><input type="radio" name="evidence" value="${k}" ${f.evidence===k?'checked':''}>${x[0]}<span>${x[1]}</span></label>`).join('')}</div>
@@ -1100,11 +1103,15 @@ function updatePreview(){
     ${cashBlocked(f) ? `<div class="alert neg" style="margin-top:16px">Hoá đơn VAT từ ${short(S.config.cashLimit)} phải trả không dùng tiền mặt để được khấu trừ.</div>` : ''}
     <p class="small faint" style="margin:16px 0 0">Đủ chữ ký thì phiếu sang Chờ thanh toán: kế toán lập đợt và hẹn ngày chi, người duyệt đợt duyệt, kế toán chi rồi đính kèm UNC. Bạn theo dõi được ngày hẹn và tải UNC ngay trên phiếu.</p>`;
 }
+const vendorHasAcc = v => !!(v && v.bank && String(v.acc || '').trim() && String(v.accName || '').trim());
 function validate(f){
   const E = {}; const kinds = f.files.map(x => x.kind); const sum = linesSum(f.lines,'total');
   if (!f.title || f.title.length < 6) E.title = 'Ghi rõ nội dung, tối thiểu 6 ký tự.';
   if (!f.amount) E.amount = 'Nhập số tiền lớn hơn 0.';
   if (f.type !== 'refund' && f.payeeType === 'me' && !bankSnap(S.me).acc) E.payee = 'Chưa có tài khoản cá nhân. Nhập tài khoản nhận hoàn ứng trước khi gửi.';
+  if (f.type !== 'refund' && f.payeeType === 'vendor') { const v = vendor(f.vendorId);
+    if (!v || v.deleted) E.vendor = 'Chọn nhà cung cấp nhận tiền.';
+    else if (!vendorHasAcc(v)) E.vendor = `${v.name} chưa có số tài khoản. Bổ sung ngân hàng, số tài khoản và tên tài khoản trước khi gửi.`; }
   if (f.type !== 'refund' && f.evidence === 'advance' && (!f.settleDue || f.settleDue < localDate())) E.settleDue = 'Chọn hạn quyết toán, không được ở quá khứ.';
   if (f.type === 'refund') {
     if (!f.other.name || !f.other.acc || !f.other.bank) E.other = 'Nhập đủ tên người nhận, số tài khoản và ngân hàng.';
@@ -2580,6 +2587,7 @@ document.addEventListener('click', e => {
   if (a === 'dnewvendor') { UI.dprefill = formPrefill('#directForm'); vendorModal(null, {ctx:'direct'}); return; }
   if (d.vnew) { vendorModal(null, {ctx:'dir'}); return; }
   if (d.vedit) { vendorModal(d.vedit, {ctx:'dir'}); return; }
+  if (d.vfix) { readForm(); vendorModal(d.vfix, {ctx:'form'}); return; }
   if (d.vdel) { vendorDelete(d.vdel); return; }
   if (a === 'direct') { directModal(); return; }
   if (d.verify) { const v = vendor(d.verify); v.verified = true; v.verifiedBy = S.me; S.reqs.forEach(r => { if (r.payee.vendorId === v.id && ['pending','approved','in_batch'].includes(r.status)) log(r, S.me, `Xác minh STK ${v.bank} ${v.acc} của ${v.name}`); }); save(); toast(`Đã xác minh STK của ${v.name}`); UI.errors = {}; render(); return; }
@@ -2712,7 +2720,7 @@ document.addEventListener('submit', async e => {
     else { toast(ctx.id ? `Đã lưu ${v.name}` : `Đã thêm ${v.name}, STK chờ kế toán xác minh`); renderMain(); }
     return; }
   if (f.id === 'directForm') { const total = digits(g('total')), tax = digits(g('tax')); const title = g('title');
-    if (title.length < 6) return mErr('Ghi rõ nội dung chi, tối thiểu 6 ký tự.'); if (!g('vendorId')) return mErr('Chọn nhà cung cấp.'); if (!total) return mErr('Nhập thành tiền.'); if (tax >= total) return mErr('Tiền thuế phải nhỏ hơn thành tiền.');
+    if (title.length < 6) return mErr('Ghi rõ nội dung chi, tối thiểu 6 ký tự.'); if (!g('vendorId')) return mErr('Chọn nhà cung cấp.'); if (!vendorHasAcc(vendor(g('vendorId')))) return mErr('Nhà cung cấp này chưa có số tài khoản. Bổ sung STK ở Master Data trước.'); if (!total) return mErr('Nhập thành tiền.'); if (tax >= total) return mErr('Tiền thuế phải nhỏ hơn thành tiền.');
     const names = [...(f.querySelector('[name=files]').files || [])].map(x => addBlob(x)).filter(Boolean);
     const pre = total - tax; const rk = tax ? String(Math.round(tax / pre * 100)) : 'kct';
     if (!(await flushUploads(names))) return;
