@@ -1774,7 +1774,11 @@ function viewProfile(){
   <div class="card" style="max-width:620px"><div class="ch"><h2 class="card-title">Tài khoản nhận tiền</h2>${b.acc ? '<span class="pill st-approved">Đã có</span>' : '<span class="pill st-returned">Chưa có</span>'}</div>
     ${b.acc ? `<div class="kv"><div><span>Ngân hàng</span><b>${esc(b.bank)}</b>${b.branch ? `<div class="small faint">CN: ${esc(b.branch)}</div>` : ''}</div><div><span>Số tài khoản</span><b class="num">${esc(b.acc)}</b></div><div><span>Tên chủ tài khoản</span><b>${esc(b.accName)}</b></div></div>` : '<p class="muted" style="margin:0">Bạn chưa nhập tài khoản. Nhập một lần, các lần hoàn ứng sau sẽ tự điền vào đề xuất.</p>'}
     <div class="row" style="margin-top:14px"><button class="btn pri" data-bankedit="1">${b.acc ? 'Sửa tài khoản' : 'Nhập tài khoản'}</button></div>
-    <p class="small faint" style="margin:12px 0 0">Đề xuất đã gửi giữ tài khoản lúc gửi. Đổi tài khoản chỉ áp dụng cho đề xuất gửi sau này.</p></div>`;
+    <p class="small faint" style="margin:12px 0 0">Đề xuất đã gửi giữ tài khoản lúc gửi. Đổi tài khoản chỉ áp dụng cho đề xuất gửi sau này.</p></div>
+  <div class="card" style="max-width:620px;margin-top:16px"><div class="ch"><h2 class="card-title">Mật khẩu đăng nhập</h2><span class="card-note">${esc(SESSION_EMAIL || '')}</span></div>
+    <div class="fgrid"><label class="f">Mật khẩu mới<input class="in" type="password" id="pw1" autocomplete="new-password" minlength="8"></label><label class="f">Nhập lại<input class="in" type="password" id="pw2" autocomplete="new-password"></label></div>
+    <div id="pwMsg" style="margin-top:10px"></div>
+    <div class="row" style="margin-top:12px"><button type="button" class="btn sec" data-pwchange="1">Đổi mật khẩu</button><span class="small faint">Tối thiểu 8 ký tự. Nếu đăng nhập bằng mật khẩu tạm, hãy đổi ngay.</span></div></div>`;
 }
 function formPrefill(sel){
   const f = $(sel); if (!f) return {}; const out = {};
@@ -2189,6 +2193,7 @@ function userModal(id){
         ${id ? perm('active','Đang hoạt động','Bỏ chọn để tạm khoá: người này không đăng nhập và không nhận việc duyệt.') : ''}</div>
         <p class="small faint" style="margin:6px 0 0">Ai cũng tạo được đề xuất chi. Người duyệt đề xuất được chọn theo từng bước ở Cấu hình phê duyệt.</p></div>
       <div id="uErr"></div>
+      ${id && u.email ? `<div class="row" style="justify-content:space-between;border-top:1px solid var(--line);padding-top:12px"><span class="small muted">Quên mật khẩu hoặc chưa nhận được tài khoản?</span><button type="button" class="btn sec sm" data-ureset="${id}">Đặt lại mật khẩu</button></div>` : '<p class="small faint" style="margin:0">Thêm xong, hệ thống tạo tài khoản đăng nhập và hiện mật khẩu tạm để bạn gửi cho người dùng.</p>'}
     </div>
     <div class="modal-f"><button type="button" class="btn sec" data-close="1">Huỷ</button><button type="submit" class="btn pri">${id ? 'Lưu thay đổi' : 'Thêm người dùng'}</button></div></form></div>`;
   $('#userForm [name=name]').focus();
@@ -2206,9 +2211,63 @@ function saveUserForm(f){
   if (id === S.me && !v.active) errs.push('Không tự khoá tài khoản đang dùng.');
   if (id === S.me && !v.admin && user(id).admin) errs.push('Không tự bỏ quyền Quản trị của tài khoản đang dùng.');
   if (errs.length) { $('#uErr').innerHTML = `<div class="alert neg">${errs.map(esc).join('<br>')}</div>`; return; }
-  if (id) { const u = user(id); const was = u.active; Object.assign(u, v); toast(`Đã lưu ${u.name}${was && !v.active && inConfig(id) ? '. Người này còn trong luồng duyệt, kiểm tra Cấu hình phê duyệt.' : ''}`); }
-  else { S.users.push(Object.assign({id:uid('u'), deleted:false}, v)); toast(`Đã thêm ${v.name}`); }
+  let access = null;
+  if (id) { const u = user(id); const was = u.active, oldEmail = (u.email || '').toLowerCase(); Object.assign(u, v); toast(`Đã lưu ${u.name}${was && !v.active && inConfig(id) ? '. Người này còn trong luồng duyệt, kiểm tra Cấu hình phê duyệt.' : ''}`);
+    if (!v.active && was) access = ['revoke', oldEmail];
+    else if (v.active && (!was || oldEmail !== v.email)) access = ['grant', v.email, oldEmail !== v.email ? oldEmail : ''];
+  } else { S.users.push(Object.assign({id:uid('u'), deleted:false}, v)); toast(`Đã thêm ${v.name}`); access = ['grant', v.email]; }
   S.guideDone.users = true; save(); closeModal(); render();
+  if (access) syncAccess(access[0], access[1], access[2], v.name);
+}
+/* Cấp / thu hồi quyền đăng nhập qua máy chủ (api/users.js): tạo tài khoản, thêm vào allowed_emails, đặt mật khẩu tạm. */
+async function accessCall(action, email, oldEmail){
+  if (!SB || !email) return {status:0, j:{}};
+  try {
+    const { data: { session } } = await SB.auth.getSession(); if (!session) return {status:401, j:{}};
+    const r = await fetch('/api/users', {method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${session.access_token}`}, body: JSON.stringify({action, email, oldEmail})});
+    return {status:r.status, j: await r.json().catch(() => ({}))};
+  } catch (e) { return {status:0, j:{message:String(e.message || e)}}; }
+}
+async function syncAccess(action, email, oldEmail, name){
+  const {status, j} = await accessCall(action, email, oldEmail);
+  if (status === 200) {
+    if (action === 'revoke') { toast(`Đã thu hồi quyền đăng nhập của ${email}`); return; }
+    if (j.password) credModal(name, email, j.password, j.created); else toast(`${email} đăng nhập được bằng mật khẩu hiện có`);
+    return;
+  }
+  if (status === 503) { manualAccessModal(action, email); return; }
+  toast(`Chưa ${action === 'revoke' ? 'thu hồi' : 'cấp'} được quyền đăng nhập cho ${email}: ${j.message || 'lỗi máy chủ'}`);
+}
+function credModal(name, email, pw, created){
+  const msg = `Chào ${name || ''}, tài khoản Xperise Spend Ops của bạn:\nLink: ${location.origin}\nEmail: ${email}\nMật khẩu tạm: ${pw}\nĐăng nhập xong vào Tài khoản cá nhân để đổi mật khẩu.`;
+  $('#layer').innerHTML = `<div class="modal-bg"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="ch" style="width:min(480px,100%)">
+    <div class="modal-h"><h3 id="ch">${created ? 'Đã tạo tài khoản đăng nhập' : 'Đã đặt mật khẩu tạm mới'}</h3><p>${esc(name || '')} đăng nhập được ngay. Mật khẩu chỉ hiện một lần, hãy gửi cho người dùng.</p></div>
+    <div class="modal-b"><div class="kv"><div><span>Email</span><b>${esc(email)}</b></div><div><span>Mật khẩu tạm</span><b class="num" style="font-size:18px;letter-spacing:.5px">${esc(pw)}</b></div></div>
+      <textarea class="in" id="credMsg" rows="5" readonly style="margin-top:12px;font-size:13px">${esc(msg)}</textarea></div>
+    <div class="modal-f"><button type="button" class="btn sec" data-copycred="1">${icon('copy',14)} Sao chép tin nhắn</button><button type="button" class="btn pri" data-close="1">Xong</button></div></div></div>`;
+}
+function manualAccessModal(action, email){
+  $('#layer').innerHTML = `<div class="modal-bg" data-close="1"><div class="modal" role="dialog" aria-modal="true" style="width:min(520px,100%)">
+    <div class="modal-h"><h3>Chưa bật cấp quyền tự động</h3><p>Đã lưu người dùng trong app, nhưng máy chủ chưa có khoá để tự ${action === 'revoke' ? 'thu hồi' : 'tạo'} tài khoản đăng nhập.</p></div>
+    <div class="modal-b stack"><p class="small" style="margin:0">Quản trị kỹ thuật cài một lần biến <b>SUPABASE_SERVICE_ROLE_KEY</b> trên Vercel (README mục 6). Sau đó thêm người dùng là xong trong một bước.</p>
+      <p class="small muted" style="margin:0">Tạm thời làm tay cho ${esc(email)}: ${action === 'revoke' ? 'xoá email khỏi bảng allowed_emails trên Supabase.' : 'Supabase → Authentication → Users → Add user, và thêm email vào bảng allowed_emails.'}</p></div>
+    <div class="modal-f"><button class="btn pri" data-close="1">Đã hiểu</button></div></div></div>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-copycred], [data-ureset], [data-pwchange]'); if (!b) return;
+  if (b.dataset.copycred) { const t = $('#credMsg'); navigator.clipboard?.writeText(t.value).then(() => toast('Đã sao chép'), () => { t.select(); document.execCommand('copy'); toast('Đã sao chép'); }); return; }
+  if (b.dataset.ureset) { const u = user(b.dataset.ureset); if (!u || !u.email) { toast('Người dùng chưa có email.'); return; }
+    askConfirm(`Đặt lại mật khẩu cho ${u.name}?`, 'Mật khẩu cũ hết hiệu lực. Hệ thống tạo mật khẩu tạm mới để bạn gửi cho người dùng.', 'Đặt lại mật khẩu', () => { closeModal(); syncAccess('reset', u.email, '', u.name); }); return; }
+  if (b.dataset.pwchange) { changePassword(); }
+});
+async function changePassword(){
+  const a = ($('#pw1')?.value || ''), c = ($('#pw2')?.value || ''); const out = $('#pwMsg');
+  const say = (m, ok) => { if (out) out.innerHTML = `<div class="alert ${ok ? 'ok' : 'neg'}">${esc(m)}</div>`; };
+  if (a.length < 8) return say('Mật khẩu tối thiểu 8 ký tự.');
+  if (a !== c) return say('Hai lần nhập chưa khớp.');
+  const { error } = await SB.auth.updateUser({ password: a });
+  if (error) return say('Chưa đổi được: ' + error.message);
+  $('#pw1').value = ''; $('#pw2').value = ''; say('Đã đổi mật khẩu.', true);
 }
 function deleteBlockers(id){
   const u = user(id); const out = [];
@@ -2230,7 +2289,7 @@ function deleteUser(id){
       <div class="modal-f"><button class="btn sec" data-close="1">Đóng</button></div></div></div>`;
     return;
   }
-  askConfirm(`Xoá ${u.name}?`, 'Người này không còn đăng nhập và không xuất hiện trong danh sách chọn. Lịch sử phiếu và nhật ký vẫn giữ tên.', 'Xoá người dùng', () => { u.deleted = true; u.active = false; save(); toast(`Đã xoá ${u.name}`); render(); });
+  askConfirm(`Xoá ${u.name}?`, 'Người này không còn đăng nhập và không xuất hiện trong danh sách chọn. Lịch sử phiếu và nhật ký vẫn giữ tên.', 'Xoá người dùng', () => { u.deleted = true; u.active = false; save(); if (u.email) syncAccess('revoke', u.email, '', u.name); toast(`Đã xoá ${u.name}`); render(); });
 }
 
 /* ===================== Ủy quyền duyệt ===================== */

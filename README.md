@@ -63,3 +63,9 @@ Việc gửi do hàm máy chủ `api/notify.js` (Vercel Function) làm. Cấu h�
 | `APP_URL` (tuỳ chọn) | `https://mlx-spendops.vercel.app` |
 
 Chưa cấu hình thì ứng dụng vẫn chạy bình thường, chỉ không gửi email. Người nhận và nội dung email do máy chủ tự tính từ dữ liệu đã lưu, client chỉ gửi mã phiếu.
+
+## 6. Thêm người dùng một bước (cấp quyền đăng nhập tự động)
+
+Khi Quản trị thêm người dùng ở **Cấu hình → Người dùng**, hàm máy chủ `api/users.js` tự tạo tài khoản đăng nhập Supabase, thêm email vào `allowed_emails` và trả về mật khẩu tạm để gửi cho người dùng. Tạm khoá hoặc xoá người dùng thì tự thu hồi quyền; đổi email thì tự chuyển quyền sang email mới; nút **Đặt lại mật khẩu** trong Sửa người dùng tạo mật khẩu tạm mới. Người dùng tự đổi mật khẩu ở **Tài khoản cá nhân**.
+
+Cài một lần: Supabase → **Project Settings → API Keys** → sao chép khoá **service_role** (secret), rồi Vercel → Project → **Settings → Environment Variables** thêm `SUPABASE_SERVICE_ROLE_KEY` = khoá đó → **Redeploy**. Khoá này chỉ nằm trên máy chủ, không bao giờ đưa vào code hay trình duyệt. Chưa cài thì app vẫn lưu người dùng, và hiện hướng dẫn làm tay.
