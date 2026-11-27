@@ -254,7 +254,8 @@ function seed(){
 let S;
 let UI = {view:'home', id:null, listTab:'mine', cfgTab:'request', draft:null, sim:null, form:null, errors:{}, inboxSel:{}, batchSel:{}, payDraft:null, flt:{q:'',from:'',to:'',pm:'',cat:'',who:''}, bflt:{q:'',from:'',to:'',pm:''}, qflt:{pm:''}, rflt:{q:'',from:'',to:'',pm:'',cat:'',who:'',exCancel:true}, cfgRule:null, vq:'', rtab:null, paySel:{}, bpm:''};
 /* save(): ghi lên Supabase sau 0,4 giây không thao tác (xem khối Lưu trữ ở cuối file). */
-function save(){ if (!S || !SB) return; dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(pushState, 400); }
+let SAVE_SEQ = 0;
+function save(){ if (!S || !SB) return; dirty = true; SAVE_SEQ++; clearTimeout(saveTimer); saveTimer = setTimeout(pushState, 400); }
 
 const user = id => S.users.find(u => u.id === id);
 const dept = id => S.depts.find(d => d.id === id);
@@ -2820,9 +2821,9 @@ async function loadState(){
     S = freshState();
     const ins = await SB.from('app_state').insert({ id:'main', data:S, version:1 });
     if (ins.error) { fatal('Không tạo được dữ liệu ban đầu: ' + ins.error.message); return false; }
-    STATE_VERSION = 1; return true;
+    STATE_VERSION = 1; BASE = JSON.parse(JSON.stringify(S)); return true;
   }
-  S = normalizeState(data.data); STATE_VERSION = data.version; return true;
+  S = normalizeState(data.data); STATE_VERSION = data.version; BASE = JSON.parse(JSON.stringify(S)); return true;
 }
 
 /* Tài khoản đầu tiên: khi chưa có người dùng nào, người đăng nhập đầu tiên thành quản trị và được gán vào mọi bước duyệt. */
@@ -2855,28 +2856,103 @@ async function boot(){
   if (S.users.length === 1 && u.admin) toast('Đã tạo tài khoản quản trị đầu tiên. Thêm người dùng và kiểm tra cấu hình phê duyệt.');
 }
 
-/* Ghi lên Supabase có kiểm soát phiên bản: nếu có người khác vừa ghi, không ghi đè mà báo tải lại. */
+/* Ghi lên Supabase có kiểm soát phiên bản. Nếu người khác (hoặc tab khác) vừa ghi trước, không ghi đè:
+   tải bản mới nhất, gộp thay đổi của mình vào theo từng bản ghi (người dùng, phiếu, đợt, NCC…), rồi ghi lại.
+   BASE là bản máy chủ lần cuối mình biết, dùng để biết mình đã đổi gì. */
+let BASE = null;
+const isObj = x => x && typeof x === 'object' && !Array.isArray(x);
+const sameJ = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function mergeById(b, l, r){
+  const bm = new Map((b || []).map(x => [x.id, x])), lm = new Map(l.map(x => [x.id, x]));
+  let out = (r || []).slice();
+  l.forEach(x => { const bx = bm.get(x.id); if (bx && sameJ(bx, x)) return;            // mình không đổi bản ghi này
+    const i = out.findIndex(y => y.id === x.id); if (i >= 0) out[i] = x; else out.push(x); });
+  bm.forEach((x, id) => { if (!lm.has(id)) out = out.filter(y => y.id !== id); });      // mình đã xoá
+  return out;
+}
+function mergeMap(b, l, r){
+  const out = Object.assign({}, r);
+  Object.keys(l).forEach(k => { if (!sameJ(l[k], (b || {})[k])) out[k] = l[k]; });
+  Object.keys(b || {}).forEach(k => { if (!(k in l)) delete out[k]; });
+  return out;
+}
+function mergeState(base, local, remote){
+  const out = JSON.parse(JSON.stringify(remote));
+  new Set([...Object.keys(local), ...Object.keys(remote)]).forEach(k => {
+    if (k === 'me') { out.me = local.me; return; }
+    const b = base ? base[k] : undefined, l = local[k], r = remote[k];
+    if (sameJ(l, b)) return;                                                             // mình không đổi: giữ bản người khác
+    if (k === 'seq') { out.seq = {}; new Set([...Object.keys(l || {}), ...Object.keys(r || {})]).forEach(p => out.seq[p] = Math.max((l||{})[p] || 0, (r||{})[p] || 0)); return; }
+    if (Array.isArray(l) && Array.isArray(r) && l.every(x => isObj(x) && x.id != null)) { out[k] = JSON.parse(JSON.stringify(mergeById(b, l, r))); return; }
+    if (isObj(l) && isObj(r) && k !== 'config') { out[k] = JSON.parse(JSON.stringify(mergeMap(b, l, r))); return; }
+    out[k] = JSON.parse(JSON.stringify(l));                                              // cấu hình, hạng mục…: lấy bản của mình
+  });
+  // Hai người cùng lúc tạo phiếu/đợt có thể trùng mã: cấp lại mã cho bản ghi mới của mình.
+  const baseIds = new Set([...((base || {}).reqs || []), ...((base || {}).batches || [])].map(x => x.id));
+  [['reqs','A'], ['batches','PB']].forEach(([k, p]) => { const seen = new Map();
+    (out[k] || []).forEach(x => { if (!x.code) return; if (seen.has(x.code) && !baseIds.has(x.id) && (local[k] || []).some(y => y.id === x.id)) {
+      out.seq = out.seq || {}; out.seq[p] = (out.seq[p] || 0) + 1; const old = x.code; x.code = (p === 'A' ? 'SP-' : 'PB-') + String(out.seq[p]).padStart(4, '0');
+      (x.log || []).push({at:now(), by:local.me, text:`Đổi mã ${old} thành ${x.code} do trùng với phiếu người khác tạo cùng lúc`}); }
+      seen.set(x.code, x.id); }); });
+  return out;
+}
+function safeRerender(){
+  renderSide();
+  const a = document.activeElement; const typing = a && a.closest && a.closest('#main') && a.matches('input, textarea, select');
+  if (!typing && !document.querySelector('#layer .modal-bg')) renderMain();
+}
 async function pushState(){
   if (!S || !SB) return; let sending = [];
   if (pushing) { saveTimer = setTimeout(pushState, 500); return; }
   pushing = true;
   try {
-    const payload = JSON.parse(JSON.stringify(S)); sending = NOTIFY_Q.splice(0);
-    const next = STATE_VERSION + 1;
-    const { data, error } = await SB.from('app_state')
-      .update({ data: payload, version: next, updated_at: new Date().toISOString() })
-      .eq('id', 'main').eq('version', STATE_VERSION).select('version');
-    if (error) throw error;
-    if (!data || data.length === 0) {
-      dirty = true;
-      toast('Dữ liệu vừa được người khác cập nhật. Tải lại trang trước khi làm tiếp, để không ghi đè thay đổi của họ.');
-    } else { STATE_VERSION = data[0].version; dirty = false; flushNotify(sending); }
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const seq0 = SAVE_SEQ; const payload = JSON.parse(JSON.stringify(S)); if (!attempt) sending = NOTIFY_Q.splice(0);
+      const next = STATE_VERSION + 1;
+      const { data, error } = await SB.from('app_state')
+        .update({ data: payload, version: next, updated_at: new Date().toISOString() })
+        .eq('id', 'main').eq('version', STATE_VERSION).select('version');
+      if (error) throw error;
+      if (data && data.length) { STATE_VERSION = data[0].version; BASE = payload; dirty = SAVE_SEQ !== seq0; flushNotify(sending); setSaveState(''); return; }
+      // Có người ghi trước: lấy bản mới nhất, gộp thay đổi của mình rồi thử lại.
+      const cur = await SB.from('app_state').select('data, version').eq('id', 'main').maybeSingle();
+      if (cur.error || !cur.data) throw cur.error || new Error('no state');
+      const meId = S.me;
+      S = normalizeState(mergeState(BASE, JSON.parse(JSON.stringify(S)), cur.data.data)); S.me = meId;
+      BASE = JSON.parse(JSON.stringify(cur.data.data)); STATE_VERSION = cur.data.version;
+      safeRerender();
+    }
+    throw new Error('Không gộp được sau nhiều lần thử');
   } catch (err) {
+    console.warn('save', err);
     NOTIFY_Q = sending.concat(NOTIFY_Q);
-    toast('Chưa lưu được lên máy chủ, hệ thống sẽ thử lại.');
+    setSaveState('Chưa lưu được lên máy chủ, đang thử lại… Đừng đóng trang.');
     saveTimer = setTimeout(pushState, 3000);
   } finally { pushing = false; }
 }
+/* Thanh báo trạng thái lưu, hiện cố định khi chưa lưu được (toast dễ bị bỏ lỡ). */
+function setSaveState(msg){
+  let el = document.getElementById('saveState');
+  if (!msg) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('div'); el.id = 'saveState'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+  el.textContent = msg;
+}
+/* Quay lại tab hoặc mỗi phút: nếu máy chủ có bản mới hơn và mình không có thay đổi chưa lưu, tải về để thấy việc người khác vừa làm. */
+async function pullIfNewer(){
+  if (!S || !SB || dirty || pushing || document.hidden) return;
+  try {
+    const { data } = await SB.from('app_state').select('version').eq('id', 'main').maybeSingle();
+    if (!data || data.version <= STATE_VERSION || dirty || pushing) return;
+    const full = await SB.from('app_state').select('data, version').eq('id', 'main').maybeSingle();
+    if (!full.data || dirty || pushing) return;
+    const meId = S.me; S = normalizeState(full.data.data); S.me = meId; STATE_VERSION = full.data.version; BASE = JSON.parse(JSON.stringify(S));
+    if (!user(S.me) || !me().active) { location.reload(); return; }
+    safeRerender();
+  } catch (e) { /* bỏ qua, lần sau thử lại */ }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pullIfNewer(); });
+window.addEventListener('focus', pullIfNewer);
+setInterval(pullIfNewer, 60000);
 window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 
 document.addEventListener('submit', async e => {
